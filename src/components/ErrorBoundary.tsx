@@ -41,7 +41,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
     } catch (e) {
       console.warn('Cache clear note:', e);
     }
-    window.location.href = '/';
+    window.location.href = import.meta.env.BASE_URL || './';
   };
 
   public render() {

@@ -464,8 +464,9 @@ export function App() {
           <button
             type="button"
             onClick={() => {
-              window.history.pushState({}, '', '/');
-              setCurrentRoute('/');
+              const targetRoute = import.meta.env.BASE_URL || '/';
+              window.history.pushState({}, '', targetRoute);
+              setCurrentRoute(targetRoute);
             }}
             className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-purple-950/50 flex items-center justify-center gap-2 transition cursor-pointer"
           >
