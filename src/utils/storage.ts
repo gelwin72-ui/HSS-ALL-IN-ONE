@@ -161,12 +161,13 @@ export const StorageService = {
         this.saveSchoolProfile(DEFAULT_SCHOOL_PROFILE);
         this.saveClassInfo(DEFAULT_CLASS_INFO);
         this.saveTeacherInfo(DEFAULT_TEACHER_INFO);
-        this.saveStudents(SEED_STUDENTS);
-        this.saveAttendance(SEED_ATTENDANCE);
-        this.saveExams(SEED_EXAMS);
-        this.saveExamMarksMap(SEED_EXAM_MARKS);
-        this.saveReminders(SEED_REMINDERS);
+        this.saveStudents([]);
+        this.saveAttendance([]);
+        this.saveExams([]);
+        this.saveExamMarksMap({});
+        this.saveReminders([]);
         this.saveSettings(DEFAULT_SETTINGS);
+        this.saveClassesList([]);
         localStorage.setItem(STORAGE_KEYS.INITIALIZED, 'true');
       }
     } catch (e) {
@@ -249,19 +250,39 @@ export const StorageService = {
 
   addNewClass(newClass: ClassItem, initialStudents?: Student[]): ClassItem {
     const classes = this.getClassesList();
+    const session = this.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const currentSchool = this.getSchoolProfile();
+
     // Ensure unique ID
     if (!newClass.id) {
-      newClass.id = `cls-${Date.now()}`;
+      newClass.id = `cls-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
     }
-    newClass.classStrength = initialStudents ? initialStudents.length : (newClass.classStrength || 0);
+    if (!newClass.teacherId && currentTeacher?.id) {
+      newClass.teacherId = currentTeacher.id;
+    }
+    if (!newClass.teacherName && currentTeacher?.name) {
+      newClass.teacherName = currentTeacher.name;
+    }
+    if (!newClass.schoolCode) {
+      newClass.schoolCode = currentTeacher?.schoolCode || currentSchool.schoolCode || '';
+    }
+    if (!newClass.createdAt) {
+      newClass.createdAt = new Date().toISOString();
+    }
+
+    const preparedStudents = (initialStudents || []).map(s => ({
+      ...s,
+      classId: newClass.id,
+      teacherId: newClass.teacherId,
+      schoolCode: newClass.schoolCode
+    }));
+
+    newClass.classStrength = preparedStudents.length;
     classes.push(newClass);
     this.saveClassesList(classes);
 
-    if (initialStudents && initialStudents.length > 0) {
-      this.saveStudents(initialStudents, newClass.id);
-    } else {
-      this.saveStudents([], newClass.id);
-    }
+    this.saveStudents(preparedStudents, newClass.id);
     this.saveAttendance([], newClass.id);
     this.saveExams([], newClass.id);
     this.saveExamMarksMap({}, newClass.id);
@@ -274,7 +295,7 @@ export const StorageService = {
     const classes = this.getClassesList();
     const idx = classes.findIndex(c => c.id === updated.id);
     if (idx >= 0) {
-      classes[idx] = updated;
+      classes[idx] = { ...classes[idx], ...updated };
       this.saveClassesList(classes);
       if (this.getActiveClassId() === updated.id) {
         this.saveClassInfo({
@@ -293,9 +314,6 @@ export const StorageService = {
 
   deleteClass(classId: string): boolean {
     let classes = this.getClassesList();
-    if (classes.length <= 1) {
-      return false; // Preserve at least one class
-    }
     classes = classes.filter(c => c.id !== classId);
     this.saveClassesList(classes);
 
@@ -307,7 +325,7 @@ export const StorageService = {
     localStorage.removeItem(`hss_class_info_${classId}`);
 
     if (this.getActiveClassId() === classId) {
-      this.setActiveClassId(classes[0].id);
+      this.setActiveClassId(classes[0]?.id || '');
     }
     notifyMutation();
     return true;
@@ -439,10 +457,7 @@ export const StorageService = {
       const targetId = classId || this.getActiveClassId();
       if (!targetId) return [];
       const key = `hss_students_${targetId}`;
-      let val = localStorage.getItem(key);
-      if (!val && targetId === 'cls-12-sci-a') {
-        val = localStorage.getItem(STORAGE_KEYS.STUDENTS);
-      }
+      const val = localStorage.getItem(key);
       if (val) {
         const parsed = JSON.parse(val);
         return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
@@ -455,15 +470,24 @@ export const StorageService = {
 
   saveStudents(students: Student[], classId?: string) {
     const targetId = classId || this.getActiveClassId();
-    localStorage.setItem(`hss_students_${targetId}`, JSON.stringify(students));
-    if (targetId === 'cls-12-sci-a') {
-      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
-    }
+    if (!targetId) return;
+    const session = this.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const currentSchool = this.getSchoolProfile();
+
+    const taggedStudents = (students || []).map(s => ({
+      ...s,
+      classId: s.classId || targetId,
+      teacherId: s.teacherId || currentTeacher?.id,
+      schoolCode: s.schoolCode || currentTeacher?.schoolCode || currentSchool.schoolCode
+    }));
+
+    localStorage.setItem(`hss_students_${targetId}`, JSON.stringify(taggedStudents));
     // Update class strength in catalog
     const classes = this.getClassesList();
     const idx = classes.findIndex(c => c.id === targetId);
     if (idx >= 0) {
-      classes[idx].classStrength = students?.length || 0;
+      classes[idx].classStrength = taggedStudents.length;
       this.saveClassesList(classes);
     }
     notifyMutation();
@@ -474,10 +498,7 @@ export const StorageService = {
       const targetId = classId || this.getActiveClassId();
       if (!targetId) return [];
       const key = `hss_attendance_${targetId}`;
-      let val = localStorage.getItem(key);
-      if (!val && targetId === 'cls-12-sci-a') {
-        val = localStorage.getItem(STORAGE_KEYS.ATTENDANCE);
-      }
+      const val = localStorage.getItem(key);
       if (val) {
         const parsed = JSON.parse(val);
         if (Array.isArray(parsed)) {
@@ -497,10 +518,17 @@ export const StorageService = {
 
   saveAttendance(attendance: AttendanceRecord[], classId?: string) {
     const targetId = classId || this.getActiveClassId();
-    localStorage.setItem(`hss_attendance_${targetId}`, JSON.stringify(attendance));
-    if (targetId === 'cls-12-sci-a') {
-      localStorage.setItem(STORAGE_KEYS.ATTENDANCE, JSON.stringify(attendance));
-    }
+    if (!targetId) return;
+    const session = this.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+
+    const taggedAttendance = (attendance || []).map(a => ({
+      ...a,
+      classId: a.classId || targetId,
+      teacherId: a.teacherId || currentTeacher?.id
+    }));
+
+    localStorage.setItem(`hss_attendance_${targetId}`, JSON.stringify(taggedAttendance));
     notifyMutation();
   },
 
@@ -527,10 +555,17 @@ export const StorageService = {
 
   saveExams(exams: Exam[], classId?: string) {
     const targetId = classId || this.getActiveClassId();
-    localStorage.setItem(`hss_exams_${targetId}`, JSON.stringify(exams));
-    if (targetId === 'cls-12-sci-a') {
-      localStorage.setItem(STORAGE_KEYS.EXAMS, JSON.stringify(exams));
-    }
+    if (!targetId) return;
+    const session = this.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+
+    const taggedExams = (exams || []).map(e => ({
+      ...e,
+      classId: e.classId || targetId,
+      teacherId: e.teacherId || currentTeacher?.id
+    }));
+
+    localStorage.setItem(`hss_exams_${targetId}`, JSON.stringify(taggedExams));
     notifyMutation();
   },
 
@@ -549,10 +584,8 @@ export const StorageService = {
 
   saveExamMarksMap(marksMap: Record<string, ExamMarksRecord>, classId?: string) {
     const targetId = classId || this.getActiveClassId();
+    if (!targetId) return;
     localStorage.setItem(`hss_marks_${targetId}`, JSON.stringify(marksMap));
-    if (targetId === 'cls-12-sci-a') {
-      localStorage.setItem(STORAGE_KEYS.EXAM_MARKS, JSON.stringify(marksMap));
-    }
     notifyMutation();
   },
 
@@ -665,12 +698,13 @@ export const StorageService = {
     this.saveSchoolProfile(DEFAULT_SCHOOL_PROFILE);
     this.saveClassInfo(DEFAULT_CLASS_INFO);
     this.saveTeacherInfo(DEFAULT_TEACHER_INFO);
-    this.saveStudents(SEED_STUDENTS);
-    this.saveAttendance(SEED_ATTENDANCE);
-    this.saveExams(SEED_EXAMS);
-    this.saveExamMarksMap(SEED_EXAM_MARKS);
-    this.saveReminders(SEED_REMINDERS);
+    this.saveStudents([]);
+    this.saveAttendance([]);
+    this.saveExams([]);
+    this.saveExamMarksMap({});
+    this.saveReminders([]);
     this.saveSettings(DEFAULT_SETTINGS);
+    this.saveClassesList([]);
     this.saveTimetables([]);
   },
 

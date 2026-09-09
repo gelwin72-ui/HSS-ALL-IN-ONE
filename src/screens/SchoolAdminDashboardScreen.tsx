@@ -126,8 +126,9 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   });
   const [teacherFilterBirthday, setTeacherFilterBirthday] = useState<'all' | 'upcoming' | 'this-month'>('all');
 
-  // Real-time Firestore synchronization for Teachers and Activity Stream
+  // Real-time Firestore synchronization for Teachers, Classes, and Activity Stream
   const [remoteTeachers, setRemoteTeachers] = useState<TeacherAccount[]>([]);
+  const [remoteClasses, setRemoteClasses] = useState<ClassItem[]>([]);
   const [realtimeActivities, setRealtimeActivities] = useState<TeacherActivityItem[]>([]);
 
   // Timetable State in Admin View
@@ -229,7 +230,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   const [activityTypeFilter, setActivityTypeFilter] = useState<string>('ALL');
   const [activitySearchQuery, setActivitySearchQuery] = useState('');
 
-  // Real-time Firestore Sync for School Teachers and Activities
+  // Real-time Firestore Sync for School Teachers, Classes, and Activities
   React.useEffect(() => {
     if (!activeSchoolCode) return;
 
@@ -238,13 +239,19 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       setRemoteTeachers(teachersList);
     });
 
-    // 2. Subscribe to real-time teacher activities for this school code from Firestore
+    // 2. Subscribe to real-time classes for this school code from Firestore
+    const unsubClasses = CloudSync.listenToSchoolClasses(activeSchoolCode, (classList) => {
+      setRemoteClasses(classList);
+    });
+
+    // 3. Subscribe to real-time teacher activities for this school code from Firestore
     const unsubActivities = CloudSync.listenToSchoolActivities(activeSchoolCode, (activities) => {
       setRealtimeActivities(activities);
     });
 
     return () => {
       unsubTeachers();
+      unsubClasses();
       unsubActivities();
     };
   }, [activeSchoolCode]);
@@ -315,11 +322,20 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     return Array.from(map.values());
   }, [activeSchoolCode, mutationCount, remoteTeachers]);
 
-  // Load all classes in school
+  // Load all classes in school (merged local and Firestore)
   const classesList = useMemo(() => {
-    const list = StorageService.getClassesList();
-    return Array.isArray(list) ? list : [];
-  }, [mutationCount]);
+    const local = StorageService.getClassesList();
+    const map = new Map<string, ClassItem>();
+    (Array.isArray(local) ? local : []).forEach(c => {
+      if (c && c.id) map.set(c.id, c);
+    });
+    (Array.isArray(remoteClasses) ? remoteClasses : []).forEach(rc => {
+      if (rc && rc.id) {
+        map.set(rc.id, { ...(map.get(rc.id) || {}), ...rc });
+      }
+    });
+    return Array.from(map.values());
+  }, [mutationCount, remoteClasses]);
 
   // Load Upcoming Birthdays
   const upcomingBirthdays = useMemo(() => {

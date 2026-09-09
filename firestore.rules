@@ -84,19 +84,50 @@ service cloud.firestore {
       allow write: if isSchoolAdmin(schoolCode);
 
       match /teachers/{teacherId} {
-        allow read: if isSignedIn();
-        allow write: if isSignedIn();
+        allow get, list: if isSignedIn() && (isOwner(teacherId) || isMemberOfSchool(schoolCode));
+        allow create: if isSignedIn() && (isOwner(teacherId) || isSchoolAdmin(schoolCode));
+        allow update: if isSignedIn() && (isOwner(teacherId) || isSchoolAdmin(schoolCode));
+        allow delete: if isSchoolAdmin(schoolCode);
       }
 
       match /activities/{activityId} {
-        allow read: if isSignedIn();
+        allow get, list: if isMemberOfSchool(schoolCode);
         allow create: if isSignedIn();
         allow update, delete: if isSchoolAdmin(schoolCode);
       }
 
       match /classes/{classId} {
-        allow read: if isMemberOfSchool(schoolCode);
-        allow write: if isSchoolAdmin(schoolCode);
+        allow get, list: if isMemberOfSchool(schoolCode);
+        allow create: if isSignedIn() && (
+          isOwner(request.resource.data.teacherId) ||
+          isSchoolAdmin(schoolCode)
+        ) && request.resource.data.schoolCode == schoolCode;
+        allow update: if isSignedIn() && (
+          isOwner(resource.data.teacherId) ||
+          isSchoolAdmin(schoolCode)
+        );
+        allow delete: if isSignedIn() && (
+          isOwner(resource.data.teacherId) ||
+          isSchoolAdmin(schoolCode)
+        );
+
+        match /students/{studentId} {
+          allow get, list: if isMemberOfSchool(schoolCode);
+          allow create, update, delete: if isSignedIn() && (
+            isSchoolAdmin(schoolCode) ||
+            isOwner(request.resource.data.teacherId) ||
+            isOwner(resource.data.teacherId)
+          );
+        }
+      }
+
+      match /students/{studentId} {
+        allow get, list: if isMemberOfSchool(schoolCode);
+        allow create, update, delete: if isSignedIn() && (
+          isSchoolAdmin(schoolCode) ||
+          isOwner(request.resource.data.teacherId) ||
+          isOwner(resource.data.teacherId)
+        );
       }
 
       match /{allSubcollections=**} {

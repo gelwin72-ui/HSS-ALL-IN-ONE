@@ -1,4 +1,27 @@
-import { database, auth, FirebaseUser, ref, get, set, update, remove, push, onValue, off } from './firebase';
+import {
+  database,
+  auth,
+  FirebaseUser,
+  ref,
+  get,
+  set,
+  update,
+  remove,
+  push,
+  onValue,
+  off,
+  firestore,
+  fsDoc,
+  fsGetDoc,
+  fsSetDoc,
+  fsUpdateDoc,
+  fsDeleteDoc,
+  fsCollection,
+  fsQuery,
+  fsWhere,
+  fsGetDocs,
+  fsOnSnapshot
+} from './firebase';
 import {
   SchoolProfile,
   ClassInfo,
@@ -249,15 +272,60 @@ class CloudSyncManager {
       this.notify('syncing');
 
       if (currentUser) {
-        const userRefPath = ref(database, 'users/' + currentUser.uid);
-        await set(userRefPath, {
-          userId: currentUser.uid,
-          email: currentUser.email || syncEmail || '',
-          displayName: currentUser.displayName || bundle.teacherInfo.teacherName || 'Teacher',
-          photoURL: currentUser.photoURL || '',
-          lastSyncedAt: bundle.lastSyncedAt,
-          appData: bundle
-        });
+        if (database) {
+          const userRefPath = ref(database, 'users/' + currentUser.uid);
+          await set(userRefPath, {
+            userId: currentUser.uid,
+            email: currentUser.email || syncEmail || '',
+            displayName: currentUser.displayName || bundle.teacherInfo.teacherName || 'Teacher',
+            photoURL: currentUser.photoURL || '',
+            lastSyncedAt: bundle.lastSyncedAt,
+            appData: bundle
+          });
+        }
+
+        if (firestore) {
+          try {
+            const userDocRef = fsDoc(firestore, 'users', currentUser.uid);
+            await fsSetDoc(userDocRef, {
+              userId: currentUser.uid,
+              email: currentUser.email || syncEmail || '',
+              displayName: currentUser.displayName || bundle.teacherInfo.teacherName || 'Teacher',
+              lastSyncedAt: bundle.lastSyncedAt,
+              schoolCode: bundle.schoolProfile.schoolCode || '',
+              role: 'teacher',
+              appData: bundle
+            }, { merge: true });
+
+            const schoolCode = (bundle.schoolProfile.schoolCode || '').trim().toUpperCase();
+            if (schoolCode && bundle.classesCatalog && bundle.classesCatalog.length > 0) {
+              for (const cls of bundle.classesCatalog) {
+                const classDocRef = fsDoc(firestore, 'schools', schoolCode, 'classes', cls.id);
+                const classPayload = {
+                  ...cls,
+                  teacherId: cls.teacherId || currentUser.uid,
+                  teacherName: cls.teacherName || bundle.teacherInfo.teacherName,
+                  schoolCode: schoolCode,
+                  updatedAt: new Date().toISOString()
+                };
+                await fsSetDoc(classDocRef, classPayload, { merge: true });
+
+                const clsStudents = bundle.classData?.[cls.id]?.students || [];
+                for (const s of clsStudents) {
+                  const studDocRef = fsDoc(firestore, 'schools', schoolCode, 'classes', cls.id, 'students', s.id);
+                  await fsSetDoc(studDocRef, {
+                    ...s,
+                    classId: cls.id,
+                    teacherId: cls.teacherId || currentUser.uid,
+                    schoolCode
+                  }, { merge: true });
+                }
+              }
+            }
+          } catch (fsErr) {
+            console.warn('Firestore pushToCloud warning:', fsErr);
+          }
+        }
       }
 
       if (syncEmail) {
@@ -288,6 +356,75 @@ class CloudSyncManager {
     }
   }
 
+  public async fetchAccountByUid(
+    uid: string
+  ): Promise<{
+    found: boolean;
+    role?: 'teacher' | 'admin';
+    teacherAccount?: TeacherAccount;
+    adminAccount?: SchoolAdminAccount;
+    appData?: UserCloudBundle;
+    lastSyncedAt?: string;
+  }> {
+    if (!uid) return { found: false };
+
+    if (firestore) {
+      try {
+        const userDocRef = fsDoc(firestore, 'users', uid);
+        const snap = await fsGetDoc(userDocRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data) {
+            return {
+              found: true,
+              role: data.role || 'teacher',
+              teacherAccount: data.teacherAccount || {
+                id: uid,
+                name: data.displayName || data.name || 'Teacher',
+                email: data.email || '',
+                phone: data.phone || '',
+                schoolName: data.schoolName || '',
+                schoolCode: data.schoolCode || '',
+                subject: data.subject || '',
+                designation: data.designation || 'Class Teacher',
+                createdAt: data.createdAt || new Date().toISOString()
+              },
+              adminAccount: data.adminAccount,
+              appData: data.appData,
+              lastSyncedAt: data.lastSyncedAt
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('Firestore fetchAccountByUid error:', err);
+      }
+    }
+
+    if (database) {
+      try {
+        const userRefPath = ref(database, 'users/' + uid);
+        const snap = await get(userRefPath);
+        if (snap.exists()) {
+          const data = snap.val();
+          if (data) {
+            return {
+              found: true,
+              role: data.role || 'teacher',
+              teacherAccount: data.teacherAccount || data.appData?.teacherAccounts?.find((t: any) => t.id === uid),
+              adminAccount: data.adminAccount,
+              appData: data.appData,
+              lastSyncedAt: data.lastSyncedAt
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('RTDB fetchAccountByUid error:', err);
+      }
+    }
+
+    return { found: false };
+  }
+
   public async fetchAccountByEmail(
     email: string,
     schoolCode?: string
@@ -301,6 +438,39 @@ class CloudSyncManager {
   }> {
     if (!email || !email.trim()) return { found: false };
     const cleanEmail = email.trim().toLowerCase();
+
+    if (firestore) {
+      try {
+        const usersCol = fsCollection(firestore, 'users');
+        const q = fsQuery(usersCol, fsWhere('email', '==', cleanEmail));
+        const querySnap = await fsGetDocs(q);
+        if (!querySnap.empty && querySnap.docs.length > 0) {
+          const docData = querySnap.docs[0].data();
+          if (docData) {
+            return {
+              found: true,
+              role: docData.role || 'teacher',
+              teacherAccount: docData.teacherAccount || {
+                id: querySnap.docs[0].id,
+                name: docData.displayName || docData.name || 'Teacher',
+                email: cleanEmail,
+                phone: docData.phone || '',
+                schoolName: docData.schoolName || '',
+                schoolCode: docData.schoolCode || '',
+                subject: docData.subject || '',
+                designation: docData.designation || 'Class Teacher',
+                createdAt: docData.createdAt || new Date().toISOString()
+              },
+              adminAccount: docData.adminAccount,
+              appData: docData.appData,
+              lastSyncedAt: docData.lastSyncedAt
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('Firestore fetchAccountByEmail error:', e);
+      }
+    }
 
     try {
       this.notify('syncing');
@@ -608,53 +778,184 @@ class CloudSyncManager {
     if (!schoolCode || !teacher || !teacher.id) return false;
     const cleanCode = schoolCode.trim().toUpperCase();
 
-    try {
-      const teacherRefPath = ref(database, `schools/${cleanCode}/teachers/${teacher.id}`);
-      const sanitizedTeacherRecord = {
-        id: teacher.id,
-        name: teacher.name,
-        email: teacher.email || '',
-        dob: teacher.dob || '',
-        phone: teacher.phone || '',
-        schoolName: teacher.schoolName || '',
-        schoolCode: cleanCode,
-        subject: teacher.subject || teacher.primarySubject || teacher.designation || 'General',
-        primarySubject: teacher.primarySubject || teacher.subject || '',
-        standard: teacher.standard || '',
-        stream: teacher.stream || '',
-        section: teacher.section || '',
-        assignedClass: teacher.assignedClass || '',
-        designation: teacher.designation || 'Class Teacher',
-        avatar: teacher.avatar || '👨‍🏫',
-        photoUrl: teacher.photoUrl || '',
-        createdAt: teacher.createdAt || new Date().toISOString(),
-        lastActiveAt: new Date().toISOString(),
-        recentActivity: teacher.recentActivity || `Active in ${teacher.assignedClass || 'Classroom'}`,
-        studentCount: teacher.studentCount || 0,
-        attendanceCount: teacher.attendanceCount || 0,
-        examCount: teacher.examCount || 0
-      };
+    const sanitizedTeacherRecord = {
+      id: teacher.id,
+      name: teacher.name,
+      email: teacher.email || '',
+      dob: teacher.dob || '',
+      phone: teacher.phone || '',
+      schoolName: teacher.schoolName || '',
+      schoolCode: cleanCode,
+      subject: teacher.subject || teacher.primarySubject || teacher.designation || '',
+      primarySubject: teacher.primarySubject || teacher.subject || '',
+      standard: teacher.standard || '',
+      stream: teacher.stream || '',
+      section: teacher.section || '',
+      assignedClass: teacher.assignedClass || '',
+      designation: teacher.designation || 'Class Teacher',
+      avatar: teacher.avatar || '👨‍🏫',
+      photoUrl: teacher.photoUrl || '',
+      createdAt: teacher.createdAt || new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      recentActivity: teacher.recentActivity || `Active in ${teacher.assignedClass || 'Classroom'}`,
+      studentCount: teacher.studentCount || 0,
+      attendanceCount: teacher.attendanceCount || 0,
+      examCount: teacher.examCount || 0
+    };
 
-      await update(teacherRefPath, sanitizedTeacherRecord);
-      return true;
-    } catch (err) {
-      console.warn('Error saving teacher to school code RTDB:', err);
-      return false;
+    if (database) {
+      try {
+        const teacherRefPath = ref(database, `schools/${cleanCode}/teachers/${teacher.id}`);
+        await update(teacherRefPath, sanitizedTeacherRecord);
+      } catch (err) {
+        console.warn('Error saving teacher to school code RTDB:', err);
+      }
     }
+
+    if (firestore) {
+      try {
+        const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${teacher.id}`);
+        await fsSetDoc(teacherDocRef, sanitizedTeacherRecord, { merge: true });
+        const userDocRef = fsDoc(firestore, `users/${teacher.id}`);
+        await fsSetDoc(userDocRef, { ...sanitizedTeacherRecord, role: 'teacher' }, { merge: true });
+      } catch (fsErr) {
+        console.warn('Firestore saveTeacherToSchool warning:', fsErr);
+      }
+    }
+
+    return true;
   }
 
   public async deleteTeacherFromSchool(schoolCode: string, teacherId: string): Promise<boolean> {
     if (!schoolCode || !teacherId) return false;
     const cleanCode = schoolCode.trim().toUpperCase();
 
-    try {
-      const teacherRefPath = ref(database, `schools/${cleanCode}/teachers/${teacherId}`);
-      await remove(teacherRefPath);
-      return true;
-    } catch (err) {
-      console.warn('Error deleting teacher from school code RTDB:', err);
-      return false;
+    if (database) {
+      try {
+        const teacherRefPath = ref(database, `schools/${cleanCode}/teachers/${teacherId}`);
+        await remove(teacherRefPath);
+      } catch (err) {
+        console.warn('Error deleting teacher from school code RTDB:', err);
+      }
     }
+
+    if (firestore) {
+      try {
+        const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${teacherId}`);
+        await fsDeleteDoc(teacherDocRef);
+      } catch (fsErr) {
+        console.warn('Firestore deleteTeacherFromSchool warning:', fsErr);
+      }
+    }
+
+    return true;
+  }
+
+  public async saveClassToSchool(schoolCode: string, classItem: ClassItem, students?: Student[]): Promise<boolean> {
+    if (!schoolCode || !classItem || !classItem.id) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+
+    if (database) {
+      try {
+        const classRefPath = ref(database, `schools/${cleanCode}/classes/${classItem.id}`);
+        await set(classRefPath, { ...classItem, schoolCode: cleanCode });
+        if (students && students.length > 0) {
+          const studsRefPath = ref(database, `schools/${cleanCode}/classes/${classItem.id}/students`);
+          await set(studsRefPath, students);
+        }
+      } catch (e) {
+        console.warn('RTDB saveClassToSchool warning:', e);
+      }
+    }
+
+    if (firestore) {
+      try {
+        const docRef = fsDoc(firestore, `schools/${cleanCode}/classes/${classItem.id}`);
+        await fsSetDoc(docRef, { ...classItem, schoolCode: cleanCode }, { merge: true });
+        if (students && students.length > 0) {
+          for (const s of students) {
+            const sRef = fsDoc(firestore, `schools/${cleanCode}/classes/${classItem.id}/students/${s.id}`);
+            await fsSetDoc(sRef, { ...s, classId: classItem.id, schoolCode: cleanCode }, { merge: true });
+          }
+        }
+      } catch (e) {
+        console.warn('Firestore saveClassToSchool warning:', e);
+      }
+    }
+
+    return true;
+  }
+
+  public async deleteClassFromSchool(schoolCode: string, classId: string): Promise<boolean> {
+    if (!schoolCode || !classId) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+
+    if (database) {
+      try {
+        const classRefPath = ref(database, `schools/${cleanCode}/classes/${classId}`);
+        await remove(classRefPath);
+      } catch (e) {}
+    }
+
+    if (firestore) {
+      try {
+        const docRef = fsDoc(firestore, `schools/${cleanCode}/classes/${classId}`);
+        await fsDeleteDoc(docRef);
+      } catch (e) {}
+    }
+
+    return true;
+  }
+
+  public listenToSchoolClasses(
+    schoolCode: string,
+    onClassesUpdated: (classes: ClassItem[]) => void
+  ): () => void {
+    if (!schoolCode) return () => {};
+    const cleanCode = schoolCode.trim().toUpperCase();
+
+    let unsubFs: (() => void) | null = null;
+    if (firestore) {
+      try {
+        const colRef = fsCollection(firestore, `schools/${cleanCode}/classes`);
+        unsubFs = fsOnSnapshot(colRef, (snapshot) => {
+          const list: ClassItem[] = [];
+          snapshot.forEach((d: any) => {
+            const val = d.data();
+            if (val) list.push({ ...val, id: val.id || d.id });
+          });
+          if (list.length > 0) {
+            onClassesUpdated(list);
+          }
+        }, err => console.warn('Firestore listenToSchoolClasses warning:', err));
+      } catch (e) {
+        console.warn('Firestore listenToSchoolClasses setup error:', e);
+      }
+    }
+
+    let unsubRtdb: (() => void) | null = null;
+    if (database) {
+      try {
+        const classesRefPath = ref(database, `schools/${cleanCode}/classes`);
+        unsubRtdb = onValue(classesRefPath, snapshot => {
+          const list: ClassItem[] = [];
+          if (snapshot.exists()) {
+            snapshot.forEach(child => {
+              const c = child.val();
+              if (c) list.push(c);
+            });
+          }
+          if (list.length > 0) {
+            onClassesUpdated(list);
+          }
+        });
+      } catch (e) {}
+    }
+
+    return () => {
+      if (unsubFs) unsubFs();
+      if (unsubRtdb) unsubRtdb();
+    };
   }
 
   public async recordTeacherActivity(

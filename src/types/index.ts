@@ -108,6 +108,9 @@ export interface ClassItem {
   academicYear: string;
   classStrength: number;
   createdAt: string;
+  teacherId?: string;
+  teacherName?: string;
+  schoolCode?: string;
 }
 
 export interface TeacherInfo {
@@ -136,6 +139,9 @@ export interface Student {
   bloodGroup?: string;
   notes?: string;
   createdAt: string;
+  classId?: string;
+  teacherId?: string;
+  schoolCode?: string;
 }
 
 export interface AttendanceRecord {
@@ -146,6 +152,9 @@ export interface AttendanceRecord {
   onDutyStudentIds?: string[];
   notes?: string;
   savedAt: string;
+  classId?: string;
+  teacherId?: string;
+  schoolCode?: string;
 }
 
 export interface Subject {
@@ -164,6 +173,9 @@ export interface Exam {
   academicYear: string;
   subjects: Subject[];
   createdAt: string;
+  classId?: string;
+  teacherId?: string;
+  schoolCode?: string;
 }
 
 export interface StudentExamMark {
@@ -182,6 +194,9 @@ export interface ExamMarksRecord {
   examId: string;
   marks: Record<string, StudentExamMark>; // studentId -> StudentExamMark
   updatedAt: string;
+  classId?: string;
+  teacherId?: string;
+  schoolCode?: string;
 }
 
 export interface Reminder {

@@ -33,7 +33,7 @@ import {
   Layers,
   Check
 } from 'lucide-react';
-import { TeacherAccount, SchoolProfile, ClassInfo, TeacherInfo, SchoolAdminAccount } from '../types';
+import { TeacherAccount, SchoolProfile, ClassInfo, ClassItem, TeacherInfo, SchoolAdminAccount } from '../types';
 import { StorageService } from '../utils/storage';
 import {
   auth,
@@ -240,20 +240,37 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     setLoadingText('Securing credentials & initializing multi-device sync...');
 
     try {
-      // 1. Create or verify secure Firebase Auth user (non-blocking)
+      let firebaseUid = `teach-${Date.now()}`;
       if (cleanEmail) {
-        createUserWithEmailAndPassword(auth, cleanEmail, signupPassword).then((res) => {
-          if (res.user) {
-            updateProfile(res.user, { displayName: signupName.trim() }).catch(() => {});
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, cleanEmail, signupPassword);
+          if (cred.user) {
+            firebaseUid = cred.user.uid;
+            updateProfile(cred.user, { displayName: signupName.trim() }).catch(() => {});
           }
-        }).catch((authErr: any) => {
+        } catch (authErr: any) {
           console.log('Firebase Auth register status:', authErr?.code || authErr?.message);
           if (authErr?.code === 'auth/email-already-in-use') {
-            signInWithEmailAndPassword(auth, cleanEmail, signupPassword).catch(signInErr => {
-              console.log('Firebase Auth signIn fallback:', signInErr);
-            });
+            try {
+              const signRes = await signInWithEmailAndPassword(auth, cleanEmail, signupPassword);
+              if (signRes.user) {
+                firebaseUid = signRes.user.uid;
+              }
+            } catch (signInErr: any) {
+              setErrorMsg('An account with this email is already registered. Please enter your existing password to log in, or switch to Teacher Login.');
+              setIsLoading(false);
+              return;
+            }
+          } else if (authErr?.code === 'auth/invalid-email') {
+            setErrorMsg('Invalid email format. Please enter a valid email address.');
+            setIsLoading(false);
+            return;
+          } else if (authErr?.code === 'auth/weak-password') {
+            setErrorMsg('Password should be at least 6 characters long.');
+            setIsLoading(false);
+            return;
           }
-        });
+        }
       }
 
       // Check if an account with this email already exists on the cloud (from another device)
@@ -311,7 +328,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       }
 
       const newAccount: TeacherAccount = {
-        id: `teach-${Date.now()}`,
+        id: firebaseUid,
         name: signupName.trim(),
         email: cleanEmail,
         phone: signupPhone.trim(),
@@ -330,6 +347,27 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         lastActiveAt: new Date().toISOString()
       };
 
+      // Write teacher profile to Firestore under /users/{firebaseUid}
+      try {
+        const userDocRef = doc(db, 'users', firebaseUid);
+        await setDoc(userDocRef, {
+          id: firebaseUid,
+          userId: firebaseUid,
+          name: signupName.trim(),
+          email: cleanEmail,
+          phone: signupPhone.trim(),
+          schoolName: signupSchool.trim(),
+          schoolCode: cleanSchoolCode,
+          subject: effectiveSubject,
+          designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
+          role: 'teacher',
+          active: true,
+          createdAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (fsErr) {
+        console.warn('Firestore user profile write note:', fsErr);
+      }
+
       const registered = StorageService.registerTeacherAccount(newAccount);
       if (!registered) {
         // Account exists locally, update it
@@ -339,6 +377,27 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           list[existingIdx] = { ...list[existingIdx], ...newAccount };
           StorageService.saveTeacherAccounts(list);
         }
+      }
+
+      // Automatically register the first class created during signup if standard and section are provided
+      if (effectiveStandard && signupSection) {
+        const initialClassId = `cls-${firebaseUid.slice(0, 6)}-${Date.now().toString(36)}`;
+        const initialClass: ClassItem = {
+          id: initialClassId,
+          className: assignedClassName,
+          standard: effectiveStandard,
+          stream: effectiveStream,
+          section: signupSection,
+          academicYear: '2025-2026',
+          classStrength: 0,
+          teacherId: firebaseUid,
+          teacherName: newAccount.name,
+          schoolCode: cleanSchoolCode,
+          createdAt: new Date().toISOString()
+        };
+        StorageService.addNewClass(initialClass, []);
+        StorageService.setActiveClassId(initialClassId);
+        CloudSync.saveClassToSchool(cleanSchoolCode, initialClass, []).catch(console.warn);
       }
 
       // Update current active TeacherInfo, SchoolProfile, and ClassInfo
@@ -429,23 +488,64 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     setLoadingText('Verifying credentials & fetching multi-device data...');
 
     try {
-      // Try Firebase Auth verification if email provided (non-blocking)
+      let authUid: string | null = null;
+      let authenticatedViaFirebase = false;
+
+      // Try Firebase Auth verification if email provided
       if (cleanQuery.includes('@')) {
-        signInWithEmailAndPassword(auth, cleanQuery, loginPassword).catch((authErr: any) => {
+        try {
+          const cred = await signInWithEmailAndPassword(auth, cleanQuery, loginPassword);
+          if (cred.user) {
+            authUid = cred.user.uid;
+            authenticatedViaFirebase = true;
+          }
+        } catch (authErr: any) {
           console.log('Firebase Auth signIn check:', authErr?.code || authErr?.message);
-        });
+          if (authErr?.code === 'auth/wrong-password' || authErr?.code === 'auth/invalid-credential') {
+            setErrorMsg('Invalid email or password. Please verify your credentials and try again.');
+            setIsLoading(false);
+            return;
+          } else if (authErr?.code === 'auth/user-not-found') {
+            setErrorMsg('No account found with this email. Please check your email or sign up on the "Teacher Sign Up" tab.');
+            setIsLoading(false);
+            return;
+          } else if (authErr?.code === 'auth/invalid-email') {
+            setErrorMsg('Please enter a valid email format.');
+            setIsLoading(false);
+            return;
+          }
+        }
       }
 
-      // 1. First check local storage accounts
-      const localAccounts = StorageService.getTeacherAccounts();
-      let match = localAccounts.find(
-        a =>
-          a.email.toLowerCase() === cleanQuery ||
-          a.phone === cleanQuery ||
-          a.name.toLowerCase() === cleanQuery
-      );
+      let match: TeacherAccount | null = null;
 
-      // 2. If not found locally, look up in Firestore cloud by email
+      // 1. Try to fetch from cloud by UID if authenticated with Firebase
+      if (authUid) {
+        try {
+          const uidResult = await CloudSync.fetchAccountByUid(authUid);
+          if (uidResult.found && uidResult.teacherAccount) {
+            match = uidResult.teacherAccount;
+            if (uidResult.appData) {
+              CloudSync.applyCloudBundle(uidResult.appData);
+            }
+          }
+        } catch (e) {
+          console.warn('UID fetch note:', e);
+        }
+      }
+
+      // 2. Check local storage accounts
+      if (!match) {
+        const localAccounts = StorageService.getTeacherAccounts();
+        match = localAccounts.find(
+          a =>
+            a.email.toLowerCase() === cleanQuery ||
+            a.phone === cleanQuery ||
+            a.name.toLowerCase() === cleanQuery
+        ) || null;
+      }
+
+      // 3. If not found locally, look up in Firestore cloud by email
       if (!match && cleanQuery.includes('@')) {
         const timeoutPromise = new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500));
         try {
@@ -469,13 +569,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         return;
       }
 
+      if (authUid && !match.id) {
+        match.id = authUid;
+      }
+
       if (loginDob && match.dob && normalizeDob(match.dob) !== normalizeDob(loginDob) && match.dob !== loginDob.trim()) {
         setErrorMsg('Incorrect date of birth. Please try again.');
         setIsLoading(false);
         return;
       }
 
-      if (match.password && match.password !== loginPassword) {
+      if (!authenticatedViaFirebase && match.password && match.password !== loginPassword) {
         setErrorMsg('Invalid password. Please try again.');
         setIsLoading(false);
         return;

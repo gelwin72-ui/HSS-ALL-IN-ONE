@@ -27,6 +27,26 @@ import {
   Database,
   DataSnapshot
 } from 'firebase/database';
+import {
+  getFirestore,
+  doc as fsDoc,
+  getDoc as fsGetDoc,
+  setDoc as fsSetDoc,
+  updateDoc as fsUpdateDoc,
+  deleteDoc as fsDeleteDoc,
+  collection as fsCollection,
+  query as fsQuery,
+  where as fsWhere,
+  getDocs as fsGetDocs,
+  addDoc as fsAddDoc,
+  onSnapshot as fsOnSnapshot,
+  orderBy as fsOrderBy,
+  serverTimestamp as fsServerTimestamp,
+  Firestore,
+  DocumentReference,
+  CollectionReference,
+  Query
+} from 'firebase/firestore';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 // Load configuration from firebase-applet-config.json with environment variable overrides
@@ -99,52 +119,163 @@ try {
 export const database: Database = dbInstance;
 export const db = database;
 
-// Firestore-compatible wrappers backed by Firebase Realtime Database
-export function doc(_db: any, ...pathSegments: string[]) {
+// Safe Firestore Initialization
+let firestoreInstance: any = null;
+try {
+  firestoreInstance = getFirestore(app);
+} catch (err) {
+  console.warn('[Firebase Firestore] Initialization warning:', err);
+}
+export const firestore: Firestore = firestoreInstance;
+
+// Direct Firestore Native Exports
+export {
+  fsDoc,
+  fsGetDoc,
+  fsSetDoc,
+  fsUpdateDoc,
+  fsDeleteDoc,
+  fsCollection,
+  fsQuery,
+  fsWhere,
+  fsGetDocs,
+  fsAddDoc,
+  fsOnSnapshot,
+  fsOrderBy,
+  fsServerTimestamp
+};
+
+// Dual-Mode Firestore / Realtime DB wrappers
+export function doc(dbRefOrTarget: any, ...pathSegments: string[]) {
+  if (dbRefOrTarget === firestore || (!dbRefOrTarget && firestore)) {
+    const fullPath = pathSegments.filter(Boolean).join('/');
+    return fsDoc(firestore, fullPath);
+  }
+  if (typeof dbRefOrTarget === 'string') {
+    const fullPath = [dbRefOrTarget, ...pathSegments].filter(Boolean).join('/');
+    if (firestore) return fsDoc(firestore, fullPath);
+    if (database) return ref(database, fullPath);
+  }
   const fullPath = pathSegments.filter(Boolean).join('/');
-  if (!database) return null;
-  return ref(database, fullPath);
+  if (database) return ref(database, fullPath);
+  if (firestore) return fsDoc(firestore, fullPath);
+  return null;
 }
 
-export async function getDoc(dbRef: any) {
-  if (!dbRef || !database) {
-    return {
-      exists: () => false,
-      data: () => null
-    };
+export async function getDoc(targetRef: any) {
+  if (!targetRef) {
+    return { exists: () => false, data: () => null };
   }
-  const snapshot: DataSnapshot = await get(dbRef);
-  return {
-    exists: () => snapshot.exists(),
-    data: () => snapshot.val()
-  };
+  // If this is a Firestore DocumentReference
+  if (targetRef && typeof targetRef.path === 'string' && firestore) {
+    try {
+      const snap = await fsGetDoc(targetRef);
+      return {
+        exists: () => snap.exists(),
+        data: () => snap.data()
+      };
+    } catch (e) {
+      console.warn('Firestore getDoc error:', e);
+    }
+  }
+  // Otherwise try RTDB DataSnapshot
+  if (database) {
+    try {
+      const snapshot: DataSnapshot = await get(targetRef);
+      return {
+        exists: () => snapshot.exists(),
+        data: () => snapshot.val()
+      };
+    } catch (e) {
+      console.warn('RTDB getDoc error:', e);
+    }
+  }
+  return { exists: () => false, data: () => null };
 }
 
-export async function setDoc(dbRef: any, data: any, options?: { merge?: boolean }) {
-  if (!dbRef || !database) return;
-  if (options?.merge) {
-    return await update(dbRef, data);
-  } else {
-    return await set(dbRef, data);
+export async function setDoc(targetRef: any, data: any, options?: { merge?: boolean }) {
+  if (!targetRef) return;
+  // If this is a Firestore DocumentReference
+  if (targetRef && typeof targetRef.path === 'string' && firestore) {
+    return await fsSetDoc(targetRef, data, options || {});
+  }
+  if (database) {
+    if (options?.merge) {
+      return await update(targetRef, data);
+    } else {
+      return await set(targetRef, data);
+    }
   }
 }
 
-export async function updateDoc(dbRef: any, data: any) {
-  if (!dbRef || !database) return;
-  return await update(dbRef, data);
+export async function updateDoc(targetRef: any, data: any) {
+  if (!targetRef) return;
+  if (targetRef && typeof targetRef.path === 'string' && firestore) {
+    return await fsUpdateDoc(targetRef, data);
+  }
+  if (database) {
+    return await update(targetRef, data);
+  }
 }
 
-export async function deleteDoc(dbRef: any) {
-  if (!dbRef || !database) return;
-  return await remove(dbRef);
+export async function deleteDoc(targetRef: any) {
+  if (!targetRef) return;
+  if (targetRef && typeof targetRef.path === 'string' && firestore) {
+    return await fsDeleteDoc(targetRef);
+  }
+  if (database) {
+    return await remove(targetRef);
+  }
 }
 
-// Compatibility stubs for legacy Firestore queries
-export function collection() { return {}; }
-export function query() { return {}; }
-export function where() { return {}; }
-export async function getDocs() { return { exists: () => false, forEach: () => {} }; }
-export async function addDoc() { return { id: '' }; }
+export function collection(dbTarget: any, ...pathSegments: string[]) {
+  const fullPath = pathSegments.filter(Boolean).join('/');
+  if (firestore) {
+    return fsCollection(firestore, fullPath);
+  }
+  return { path: fullPath };
+}
+
+export function query(collectionRef: any, ...queryConstraints: any[]) {
+  if (firestore && collectionRef) {
+    try {
+      return fsQuery(collectionRef, ...queryConstraints);
+    } catch {
+      return collectionRef;
+    }
+  }
+  return collectionRef;
+}
+
+export function where(fieldPath: string, opStr: any, value: any) {
+  return fsWhere(fieldPath, opStr, value);
+}
+
+export async function getDocs(queryRef: any) {
+  if (firestore && queryRef) {
+    try {
+      const snap = await fsGetDocs(queryRef);
+      return snap;
+    } catch (err) {
+      console.warn('Firestore getDocs warning:', err);
+    }
+  }
+  return { exists: () => false, forEach: () => {}, docs: [], empty: true, size: 0 };
+}
+
+export async function addDoc(collectionRef: any, data: any) {
+  if (firestore && collectionRef) {
+    return await fsAddDoc(collectionRef, data);
+  }
+  return { id: `doc-${Date.now()}` };
+}
+
+export function onSnapshot(targetRef: any, onNext: (snap: any) => void, onError?: (err: any) => void) {
+  if (firestore && targetRef) {
+    return fsOnSnapshot(targetRef, onNext, onError);
+  }
+  return () => {};
+}
 
 export enum OperationType {
   CREATE = 'create',
