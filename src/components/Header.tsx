@@ -120,9 +120,10 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="flex items-center gap-2">
                 <h1 
                   onClick={onNavigateHome}
-                  className="text-base sm:text-lg font-bold tracking-tight bg-gradient-to-r from-purple-400 to-indigo-400 bg-clip-text text-transparent uppercase truncate cursor-pointer"
+                  className="text-base sm:text-lg font-bold tracking-tight bg-gradient-to-r from-purple-400 to-indigo-400 bg-clip-text text-transparent truncate cursor-pointer max-w-[190px] sm:max-w-md"
+                  title={schoolName || "St. Sebastian's Higher Secondary School"}
                 >
-                  HSS ALL IN ONE
+                  {schoolName || "St. Sebastian's Higher Secondary School"}
                 </h1>
 
                 {/* Class Switcher Pill Button */}
@@ -238,8 +239,6 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-gray-400 font-medium">
-                <span className="truncate max-w-[180px] sm:max-w-xs">{schoolName || "St. Sebastian's Higher Secondary School"}</span>
-                <span className="text-slate-600 hidden sm:inline">•</span>
                 <span className="text-slate-400 shrink-0">Principal: {principalName || 'Principal'}</span>
                 {schoolCode && (
                   <span className="text-[10px] font-mono text-amber-400/90 font-bold shrink-0 bg-amber-400/10 px-1.5 py-0.2 rounded border border-amber-400/20">
