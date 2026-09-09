@@ -5,17 +5,19 @@ import fs from 'fs';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  const isGitHubActions = process.env.GITHUB_ACTIONS === 'true';
   return {
-    base: '/HSS-ALL-IN-ONE/',
+    base: isGitHubActions ? '/HSS-ALL-IN-ONE/' : './',
     plugins: [
       react(),
       tailwindcss(),
-      // Ensure GitHub Pages SPA fallback works for deep links and refreshes
+      // Ensure SPA fallback works for deep links and refreshes
       {
-        name: 'spa-404-fallback',
+        name: 'spa-fallback-plugin',
         closeBundle() {
-          const distIndex = path.resolve(__dirname, 'dist/index.html');
-          const dist404 = path.resolve(__dirname, 'dist/404.html');
+          const distDir = path.resolve(__dirname, 'dist');
+          const distIndex = path.resolve(distDir, 'index.html');
+          const dist404 = path.resolve(distDir, '404.html');
           if (fs.existsSync(distIndex)) {
             fs.copyFileSync(distIndex, dist404);
           }
