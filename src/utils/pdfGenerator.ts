@@ -27,7 +27,7 @@ function addHeader(
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
-  doc.text(school.schoolName || 'HIGHER SECONDARY SCHOOL', pageWidth / 2, 11, { align: 'center' });
+  doc.text(school.schoolName || "St. Sebastian's Higher Secondary School", pageWidth / 2, 11, { align: 'center' });
 
   // School Address / Code
   doc.setFont('helvetica', 'normal');

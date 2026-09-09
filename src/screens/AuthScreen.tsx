@@ -1023,7 +1023,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
 
         // Update local teacher records
         const localTeachers = StorageService.getTeacherAccounts();
-        const existingIdx = localTeachers.findIndex(t => t.email.toLowerCase() === cleanEmail);
+        const existingIdx = localTeachers.findIndex(t => 
+          (t.email && t.email.toLowerCase() === cleanEmail) ||
+          (t.gmail && t.gmail.toLowerCase() === cleanEmail)
+        );
         if (existingIdx >= 0) {
           localTeachers[existingIdx].password = resetNewPassword;
           StorageService.saveTeacherAccounts(localTeachers);
