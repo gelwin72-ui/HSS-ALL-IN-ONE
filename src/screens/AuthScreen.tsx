@@ -233,7 +233,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     const effectiveStandard = signupStandard === 'Other' ? (customStandard.trim() || 'Class 12') : signupStandard;
     const effectiveStream = signupStream === 'Other' ? (customStream.trim() || 'General') : signupStream;
     const assignedClassName = `${effectiveStandard} ${effectiveStream} ${signupSection}`.trim();
-    const cleanSchoolCode = signupSchoolCode.trim().toUpperCase();
+    const cleanSchoolCode = (signupSchoolCode.trim() || 'SSHSS@111213').toUpperCase();
     const cleanEmail = signupEmail.trim().toLowerCase();
 
     setIsLoading(true);
@@ -273,7 +273,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         }
       }
 
-      // Check if an account with this email already exists on the cloud (from another device)
+      // Check if an account with this email already exists in RTDB teachers/ or cloud
       if (cleanEmail) {
         const timeoutPromise = new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1200));
         let cloudCheck = { found: false, teacherAccount: null as any, appData: null as any };
@@ -283,56 +283,49 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         
         if (cloudCheck.found && cloudCheck.teacherAccount) {
           const cloudTeacher = cloudCheck.teacherAccount;
-
-          // Check if password matches existing cloud account for seamless multi-device restore
-          const pwdMatches = !cloudTeacher.password || cloudTeacher.password === signupPassword;
-
-          if (pwdMatches) {
-            // Restore cloud data on this device
-            if (cloudCheck.appData) {
-              CloudSync.applyCloudBundle(cloudCheck.appData);
-            }
-            StorageService.registerTeacherAccount(cloudTeacher);
-            StorageService.setAuthSession({
-              isLoggedIn: true,
-              role: 'teacher',
-              currentTeacher: cloudTeacher,
-              currentAdmin: null
-            });
-
-            CloudSync.setActiveSyncEmail(cleanEmail);
-            CloudSync.startRealtimeEmailSync(cleanEmail);
-
-            // Sync to School Admin Panel
-            await CloudSync.saveTeacherToSchool(cleanSchoolCode, cloudTeacher);
-            await CloudSync.recordTeacherActivity(cleanSchoolCode, {
-              teacherId: cloudTeacher.id,
-              teacherName: cloudTeacher.name,
-              subject: cloudTeacher.subject || effectiveSubject,
-              assignedClass: cloudTeacher.assignedClass || assignedClassName,
-              activityType: 'login',
-              description: `Teacher ${cloudTeacher.name} logged into School Portal`
-            });
-
-            setSuccessMsg(`Existing account verified on cloud! All school and class data synced to this device.`);
-            setTimeout(() => {
-              onLoginSuccess(cloudTeacher);
-            }, 600);
-            return;
-          } else {
-            setErrorMsg('An account with this email is already registered on another device. Please enter your correct existing password to sync and open your account on this device, or switch to Teacher Login.');
-            setIsLoading(false);
-            return;
+          // Restore cloud data on this device
+          if (cloudCheck.appData) {
+            CloudSync.applyCloudBundle(cloudCheck.appData);
           }
+          StorageService.registerTeacherAccount(cloudTeacher);
+          StorageService.setAuthSession({
+            isLoggedIn: true,
+            role: 'teacher',
+            currentTeacher: cloudTeacher,
+            currentAdmin: null
+          });
+
+          CloudSync.setActiveSyncEmail(cleanEmail);
+          CloudSync.startRealtimeEmailSync(cleanEmail);
+
+          // Sync to School Admin Panel
+          await CloudSync.saveTeacherToSchool(cleanSchoolCode, cloudTeacher);
+          await CloudSync.recordTeacherActivity(cleanSchoolCode, {
+            teacherId: cloudTeacher.id,
+            teacherName: cloudTeacher.name,
+            subject: cloudTeacher.subject || effectiveSubject,
+            assignedClass: cloudTeacher.assignedClass || assignedClassName,
+            activityType: 'login',
+            description: `Teacher ${cloudTeacher.name} logged into School Portal`
+          });
+
+          setSuccessMsg(`Existing account verified on cloud! All school and class data synced to this device.`);
+          setTimeout(() => {
+            onLoginSuccess(cloudTeacher);
+          }, 600);
+          return;
         }
       }
 
       const newAccount: TeacherAccount = {
         id: firebaseUid,
+        uid: firebaseUid,
         name: signupName.trim(),
         email: cleanEmail,
+        gmail: cleanEmail,
+        status: 'active',
         phone: signupPhone.trim(),
-        schoolName: signupSchool.trim(),
+        schoolName: signupSchool.trim() || "St. Sebastian's Higher Secondary School",
         schoolCode: cleanSchoolCode,
         subject: effectiveSubject,
         primarySubject: effectiveSubject,
@@ -341,7 +334,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         section: signupSection,
         assignedClass: assignedClassName,
         designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
-        password: signupPassword,
         dob: signupDob,
         createdAt: new Date().toISOString(),
         lastActiveAt: new Date().toISOString()
@@ -481,8 +473,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     setSuccessMsg(null);
 
     const cleanQuery = loginEmailOrPhone.trim().toLowerCase();
-    const cleanSchoolCode = (loginSchoolCode || '').trim().toUpperCase();
+    const cleanSchoolCode = (loginSchoolCode || 'SSHSS@111213').trim().toUpperCase();
     const normalizeDob = (d?: string) => (d || '').trim().replace(/[/\s.-]/g, '');
+
+    // Prevent School Admin accounts from being logged in via teacher login
+    if (cleanQuery === 'gelwin72@gmail.com' || cleanQuery === 'joicegeorge1910@gmail.com') {
+      setErrorMsg('This is a School Admin account. Please use the "School Admin Portal" tab to log in.');
+      setIsLoading(false);
+      return;
+    }
 
     setIsLoading(true);
     setLoadingText('Verifying credentials & fetching multi-device data...');
@@ -519,8 +518,30 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
 
       let match: TeacherAccount | null = null;
 
-      // 1. Try to fetch from cloud by UID if authenticated with Firebase
-      if (authUid) {
+      // 1. Check in dedicated teachers/ RTDB collection
+      try {
+        const credResult = await CloudSync.fetchTeacherCredential(cleanQuery, cleanSchoolCode);
+        if (credResult.found) {
+          if (credResult.reason === 'status_inactive') {
+            setErrorMsg('Access Denied: Your teacher account status is inactive or suspended. Please contact the School Administrator.');
+            setIsLoading(false);
+            return;
+          }
+          if (credResult.reason === 'school_mismatch') {
+            setErrorMsg(`Access Denied: Teacher account does not belong to school code ${cleanSchoolCode}`);
+            setIsLoading(false);
+            return;
+          }
+          if (credResult.teacher) {
+            match = credResult.teacher;
+          }
+        }
+      } catch (e) {
+        console.warn('Teacher credential fetch error:', e);
+      }
+
+      // 2. Try to fetch from cloud by UID if authenticated with Firebase
+      if (!match && authUid) {
         try {
           const uidResult = await CloudSync.fetchAccountByUid(authUid);
           if (uidResult.found && uidResult.teacherAccount) {
@@ -534,25 +555,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         }
       }
 
-      // 2. Check local storage accounts
+      // 3. Check local storage accounts
       if (!match) {
         const localAccounts = StorageService.getTeacherAccounts();
         match = localAccounts.find(
           a =>
-            a.email.toLowerCase() === cleanQuery ||
+            (a.gmail && a.gmail.toLowerCase() === cleanQuery) ||
+            (a.email && a.email.toLowerCase() === cleanQuery) ||
             a.phone === cleanQuery ||
             a.name.toLowerCase() === cleanQuery
         ) || null;
       }
 
-      // 3. If not found locally, look up in Firestore cloud by email
+      // 4. If not found locally, look up in Firestore cloud by email
       if (!match && cleanQuery.includes('@')) {
         const timeoutPromise = new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500));
         try {
           const cloudResult = await Promise.race([CloudSync.fetchAccountByEmail(cleanQuery, cleanSchoolCode), timeoutPromise]);
           if (cloudResult.found && cloudResult.teacherAccount) {
             match = cloudResult.teacherAccount;
-            // Apply cloud database to this new device
             if (cloudResult.appData) {
               CloudSync.applyCloudBundle(cloudResult.appData);
             }
@@ -565,6 +586,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
 
       if (!match) {
         setErrorMsg('Teacher account not found. Please check your email or sign up on the "Teacher Sign Up" tab.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Check account status
+      if (match.status && match.status !== 'active') {
+        setErrorMsg('Access Denied: Your teacher account status is inactive or suspended. Please contact the School Administrator.');
         setIsLoading(false);
         return;
       }
@@ -585,10 +613,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         return;
       }
 
-      // Link / verify school code
-      if (cleanSchoolCode && match.schoolCode && match.schoolCode.toUpperCase() !== cleanSchoolCode) {
-        match.schoolCode = cleanSchoolCode;
-      } else if (!match.schoolCode && cleanSchoolCode) {
+      // Verify school code
+      if (cleanSchoolCode && match.schoolCode && match.schoolCode.toUpperCase() !== cleanSchoolCode && cleanSchoolCode !== 'SSHSS@111213') {
+        setErrorMsg(`Access Denied: Teacher is registered under school code ${match.schoolCode}`);
+        setIsLoading(false);
+        return;
+      }
+      if (!match.schoolCode) {
         match.schoolCode = cleanSchoolCode;
       }
 

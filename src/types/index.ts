@@ -2,11 +2,14 @@ export type Gender = 'male' | 'female' | 'other';
 
 export interface TeacherAccount {
   id: string;
+  uid?: string;
   name: string;
   email?: string;
+  gmail?: string;
   phone: string;
   schoolName: string;
   schoolCode: string;
+  status?: 'active' | 'inactive' | 'suspended';
   subject?: string;
   primarySubject?: string;
   standard?: string;

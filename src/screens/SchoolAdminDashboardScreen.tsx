@@ -101,6 +101,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   const [editingTeacher, setEditingTeacher] = useState<TeacherAccount | null>(null);
   const [teacherFormData, setTeacherFormData] = useState<{
     name: string;
+    email: string;
     subject: string;
     designation: string;
     assignedClass: string;
@@ -113,6 +114,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     photoUrl: string;
   }>({
     name: '',
+    email: '',
     subject: 'Physics',
     designation: 'HSST Physics',
     assignedClass: 'Class 12 (Plus Two) Bio-Science A',
@@ -751,6 +753,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     setEditingTeacher(null);
     setTeacherFormData({
       name: '',
+      email: '',
       subject: 'Physics',
       designation: 'HSST Physics',
       assignedClass: 'Class 12 (Plus Two) Bio-Science A',
@@ -769,6 +772,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     setEditingTeacher(teacher);
     setTeacherFormData({
       name: teacher.name,
+      email: teacher.gmail || teacher.email || '',
       subject: teacher.subject || teacher.primarySubject || 'Physics',
       designation: teacher.designation || 'Class Teacher',
       assignedClass: teacher.assignedClass || 'Class 12 (Plus Two) Bio-Science A',
@@ -791,11 +795,15 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     }
 
     const composedClass = `${teacherFormData.standard} ${teacherFormData.stream} ${teacherFormData.section}`.trim();
+    const cleanEmail = teacherFormData.email.trim().toLowerCase();
 
     if (editingTeacher) {
       const updated: TeacherAccount = {
         ...editingTeacher,
         name: teacherFormData.name.trim(),
+        email: cleanEmail || editingTeacher.email || editingTeacher.gmail || '',
+        gmail: cleanEmail || editingTeacher.gmail || editingTeacher.email || '',
+        status: editingTeacher.status || 'active',
         subject: teacherFormData.subject.trim(),
         designation: teacherFormData.designation.trim(),
         assignedClass: composedClass || teacherFormData.assignedClass.trim(),
@@ -809,21 +817,27 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
         lastActiveAt: new Date().toISOString()
       };
       StorageService.updateTeacherAccount(updated);
-      await CloudSync.saveTeacherToSchool(admin.schoolCode, updated);
+      await CloudSync.saveTeacherToSchool(admin.schoolCode || 'SSHSS@111213', updated);
       showToast(`Teacher profile for ${updated.name} updated successfully!`);
     } else {
+      const newId = `teach-${Date.now().toString(36)}`;
       const newTeach: TeacherAccount = {
-        id: `teach-${Date.now().toString(36)}`,
+        id: newId,
+        uid: newId,
         name: teacherFormData.name.trim(),
+        email: cleanEmail,
+        gmail: cleanEmail,
+        status: 'active',
         subject: teacherFormData.subject.trim(),
+        primarySubject: teacherFormData.subject.trim(),
         designation: teacherFormData.designation.trim() || 'Class Teacher',
         assignedClass: composedClass || 'Class 12 (Plus Two) Bio-Science A',
         standard: teacherFormData.standard,
         stream: teacherFormData.stream,
         section: teacherFormData.section,
         phone: teacherFormData.phone.trim() || '+91 98470 00000',
-        schoolName: schoolProfile.schoolName || admin.schoolName,
-        schoolCode: admin.schoolCode,
+        schoolName: schoolProfile.schoolName || admin.schoolName || "St. Sebastian's Higher Secondary School",
+        schoolCode: admin.schoolCode || 'SSHSS@111213',
         dob: teacherFormData.dob || undefined,
         avatar: teacherFormData.avatar || '👨‍🏫',
         photoUrl: teacherFormData.photoUrl || undefined,
@@ -831,8 +845,8 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
         lastActiveAt: new Date().toISOString()
       };
       StorageService.addTeacherAccount(newTeach);
-      await CloudSync.saveTeacherToSchool(admin.schoolCode, newTeach);
-      showToast(`New teacher ${newTeach.name} registered under school ${admin.schoolCode}!`);
+      await CloudSync.saveTeacherToSchool(admin.schoolCode || 'SSHSS@111213', newTeach);
+      showToast(`New teacher ${newTeach.name} registered under school ${admin.schoolCode || 'SSHSS@111213'}!`);
     }
     setIsTeacherModalOpen(false);
     triggerRefresh();
@@ -1628,10 +1642,22 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                         
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-slate-500 text-[11px] flex items-center gap-1.5">
-                            <svg className="w-3.5 h-3.5 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                            Email ID
+                            <Mail className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                            Teacher Gmail
                           </span>
-                          <span className="text-sky-300 font-mono text-[11px] truncate" title={teacher.email || 'Not Provided'}>{teacher.email || 'Not Provided'}</span>
+                          <span className="text-sky-300 font-mono text-[11px] truncate" title={teacher.gmail || teacher.email || 'Not Provided'}>
+                            {teacher.gmail || teacher.email || 'Not Provided'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-slate-500 text-[11px] flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            Date Registered
+                          </span>
+                          <span className="text-slate-300 font-mono text-[11px]">
+                            {teacher.createdAt ? new Date(teacher.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Active'}
+                          </span>
                         </div>
 
                         {/* Date of Birth & Birthday Status */}
@@ -4276,8 +4302,8 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 </div>
               </div>
 
-              {/* Full Name & Subject Assigned */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Full Name, Subject Assigned & Teacher Gmail */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <label className="text-[11px] font-bold text-slate-300">Teacher Full Name *</label>
                   <input
@@ -4297,7 +4323,21 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                     required
                     value={teacherFormData.subject}
                     onChange={e => setTeacherFormData(f => ({ ...f, subject: e.target.value }))}
-                    placeholder="e.g. Physics, Chemistry, Mathematics..."
+                    placeholder="e.g. Physics, Chemistry..."
+                    className="w-full px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1">
+                    <Mail className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Teacher Gmail</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={teacherFormData.email}
+                    onChange={e => setTeacherFormData(f => ({ ...f, email: e.target.value }))}
+                    placeholder="teacher@gmail.com"
                     className="w-full px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
                   />
                 </div>

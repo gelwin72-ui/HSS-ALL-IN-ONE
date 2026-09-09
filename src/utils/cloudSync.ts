@@ -776,15 +776,19 @@ class CloudSyncManager {
 
   public async saveTeacherToSchool(schoolCode: string, teacher: TeacherAccount): Promise<boolean> {
     if (!schoolCode || !teacher || !teacher.id) return false;
-    const cleanCode = schoolCode.trim().toUpperCase();
+    const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
+    const cleanGmail = (teacher.gmail || teacher.email || '').trim().toLowerCase();
 
     const sanitizedTeacherRecord = {
       id: teacher.id,
+      uid: teacher.uid || teacher.id,
       name: teacher.name,
-      email: teacher.email || '',
+      gmail: cleanGmail,
+      email: cleanGmail,
+      status: teacher.status || 'active',
       dob: teacher.dob || '',
       phone: teacher.phone || '',
-      schoolName: teacher.schoolName || '',
+      schoolName: teacher.schoolName || "St. Sebastian's Higher Secondary School",
       schoolCode: cleanCode,
       subject: teacher.subject || teacher.primarySubject || teacher.designation || '',
       primarySubject: teacher.primarySubject || teacher.subject || '',
@@ -805,10 +809,15 @@ class CloudSyncManager {
 
     if (database) {
       try {
-        const teacherRefPath = ref(database, `schools/${cleanCode}/teachers/${teacher.id}`);
-        await update(teacherRefPath, sanitizedTeacherRecord);
+        // 1. Write to new dedicated teachers/ collection in Realtime Database
+        const dedicatedTeacherRef = ref(database, `teachers/${teacher.id}`);
+        await update(dedicatedTeacherRef, sanitizedTeacherRecord);
+
+        // 2. Also write to schools/{schoolCode}/teachers/{teacher.id} for scoped Admin Panel listeners
+        const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${teacher.id}`);
+        await update(schoolTeacherRef, sanitizedTeacherRecord);
       } catch (err) {
-        console.warn('Error saving teacher to school code RTDB:', err);
+        console.warn('Error saving teacher to RTDB:', err);
       }
     }
 
@@ -828,14 +837,17 @@ class CloudSyncManager {
 
   public async deleteTeacherFromSchool(schoolCode: string, teacherId: string): Promise<boolean> {
     if (!schoolCode || !teacherId) return false;
-    const cleanCode = schoolCode.trim().toUpperCase();
+    const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
 
     if (database) {
       try {
-        const teacherRefPath = ref(database, `schools/${cleanCode}/teachers/${teacherId}`);
-        await remove(teacherRefPath);
+        const dedicatedTeacherRef = ref(database, `teachers/${teacherId}`);
+        await remove(dedicatedTeacherRef);
+
+        const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${teacherId}`);
+        await remove(schoolTeacherRef);
       } catch (err) {
-        console.warn('Error deleting teacher from school code RTDB:', err);
+        console.warn('Error deleting teacher from RTDB:', err);
       }
     }
 
@@ -1151,6 +1163,79 @@ class CloudSyncManager {
       console.warn('Error fetching school teachers from RTDB:', e);
       return [];
     }
+  }
+
+  public async fetchTeacherCredential(
+    gmail: string,
+    schoolCode?: string
+  ): Promise<{
+    found: boolean;
+    valid: boolean;
+    reason?: 'status_inactive' | 'school_mismatch' | 'not_found';
+    teacher?: TeacherAccount;
+  }> {
+    if (!gmail || !gmail.trim()) return { found: false, valid: false, reason: 'not_found' };
+    const cleanGmail = gmail.trim().toLowerCase();
+    const cleanSchoolCode = schoolCode ? schoolCode.trim().toUpperCase() : '';
+
+    if (database) {
+      try {
+        // 1. Check in dedicated teachers/ RTDB collection
+        const teachersRef = ref(database, 'teachers');
+        const snap = await get(teachersRef);
+        if (snap.exists()) {
+          let matchedTeacher: TeacherAccount | null = null;
+          snap.forEach(child => {
+            const val = child.val() as TeacherAccount;
+            const tEmail = (val.gmail || val.email || '').trim().toLowerCase();
+            if (tEmail === cleanGmail) {
+              matchedTeacher = val;
+            }
+          });
+
+          if (matchedTeacher) {
+            const t = matchedTeacher as TeacherAccount;
+            // Check status (default is active)
+            if (t.status && t.status !== 'active') {
+              return { found: true, valid: false, reason: 'status_inactive', teacher: t };
+            }
+            // Check school code if provided
+            if (cleanSchoolCode && t.schoolCode && t.schoolCode.toUpperCase() !== cleanSchoolCode) {
+              return { found: true, valid: false, reason: 'school_mismatch', teacher: t };
+            }
+            return { found: true, valid: true, teacher: t };
+          }
+        }
+
+        // 2. Check in schools/{cleanSchoolCode}/teachers RTDB collection if school code is provided
+        if (cleanSchoolCode) {
+          const schoolTeachersRef = ref(database, `schools/${cleanSchoolCode}/teachers`);
+          const schoolSnap = await get(schoolTeachersRef);
+          if (schoolSnap.exists()) {
+            let matchedTeacher: TeacherAccount | null = null;
+            schoolSnap.forEach(child => {
+              const val = child.val() as TeacherAccount;
+              const tEmail = (val.gmail || val.email || '').trim().toLowerCase();
+              if (tEmail === cleanGmail) {
+                matchedTeacher = val;
+              }
+            });
+
+            if (matchedTeacher) {
+              const t = matchedTeacher as TeacherAccount;
+              if (t.status && t.status !== 'active') {
+                return { found: true, valid: false, reason: 'status_inactive', teacher: t };
+              }
+              return { found: true, valid: true, teacher: t };
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Error querying teachers collection in RTDB:', err);
+      }
+    }
+
+    return { found: false, valid: false, reason: 'not_found' };
   }
 
   public async logUnauthorizedAttempt(email: string, schoolCode: string, reason: string) {
