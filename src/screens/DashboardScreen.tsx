@@ -125,7 +125,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
               HSS ALL IN ONE
             </h1>
             <p className="text-xs text-purple-400 font-bold uppercase tracking-wider">
-              {school.schoolName || 'Higher Secondary School Management Portal'}
+              {school.schoolName || "St. Sebastian's Higher Secondary School"}
             </p>
           </div>
         </div>
@@ -185,7 +185,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 {teacher.designation || 'Class Teacher'}{classInfo.className ? ` • ` : ''}{classInfo.className && <span className="text-purple-300">{classInfo.className}</span>}
               </p>
               <p className="text-[11px] text-slate-400 font-mono">
-                {school.schoolName || 'School Profile'} {school.schoolCode ? `(${school.schoolCode})` : ''}
+                {school.schoolName || "St. Sebastian's Higher Secondary School"} {school.schoolCode ? `(${school.schoolCode})` : ''}
               </p>
             </div>
           </div>
@@ -436,7 +436,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 School Profile & Classes
               </h4>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Configure institution details, class streams, subjects, and teachers directory.
+                Configure institution details, class streams, subjects, and Teachers directory.
               </p>
             </div>
             <div className="mt-4 pt-3 border-t border-[#2D3139] flex items-center justify-between text-xs font-bold text-purple-400">

@@ -526,7 +526,9 @@ export function App() {
 
       {/* 2. Top Application Header with Class Switcher */}
       <Header
-        schoolName={school.schoolName || 'Govt. Model HSS'}
+        schoolName={school.schoolName || "St. Sebastian's Higher Secondary School"}
+        schoolCode={school.schoolCode}
+        principalName={school.principalName || 'Principal'}
         classNameStr={classInfo.className || 'Class 12 Science A'}
         classesList={classesList}
         activeClassId={activeClassId}

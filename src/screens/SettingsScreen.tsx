@@ -695,7 +695,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
           </div>
           <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139]">
             <span className="text-slate-500 block text-[10px] uppercase font-bold tracking-wider">Assigned School</span>
-            <span className="font-bold text-indigo-300 text-sm truncate block">{school.schoolName || 'Govt. Model HSS'}</span>
+            <span className="font-bold text-indigo-300 text-sm truncate block">{school.schoolName || "St. Sebastian's Higher Secondary School"}</span>
           </div>
         </div>
       </div>

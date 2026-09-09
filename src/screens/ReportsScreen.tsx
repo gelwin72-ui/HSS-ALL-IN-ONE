@@ -72,7 +72,8 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
     const doc = generateFullSchoolDataPDF(school, classInfo, teacher, students, attendance, exams, examMarksMap);
     setPreviewDoc(doc);
     setPreviewTitle('Comprehensive Class Dossier & Master Report');
-    setPreviewFilename(`${classInfo.className.replace(/[^a-zA-Z0-9]/g, '_')}_Master_Dossier.pdf`);
+    const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
+    setPreviewFilename(`${safeClassName}_Master_Dossier.pdf`);
   };
 
   // 2. Export Exam Tabulation PDF
@@ -82,8 +83,9 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
 
     const doc = generateExamReportPDF(school, classInfo, teacher, targetExam, students, examMarksMap[targetExam.id]);
     setPreviewDoc(doc);
-    setPreviewTitle(`Full Exam Tabulation: ${targetExam.name}`);
-    setPreviewFilename(`${targetExam.name.replace(/[^a-zA-Z0-9]/g, '_')}_Tabulation.pdf`);
+    setPreviewTitle(`Full Exam Tabulation: ${targetExam.name || 'Exam'}`);
+    const safeExamName = (targetExam.name || 'Exam').replace(/[^a-zA-Z0-9]/g, '_');
+    setPreviewFilename(`${safeExamName}_Tabulation.pdf`);
   };
 
   // 3. Export Monthly Attendance PDF
@@ -91,7 +93,8 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
     const doc = generateMonthlyAttendancePDF(school, classInfo, teacher, selectedMonthName, selectedYear, students, attendance);
     setPreviewDoc(doc);
     setPreviewTitle(`Class Monthly Attendance Report - ${selectedMonthName} ${selectedYear}`);
-    setPreviewFilename(`${classInfo.className.replace(/[^a-zA-Z0-9]/g, '_')}_Attendance_${selectedMonthName}_${selectedYear}.pdf`);
+    const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
+    setPreviewFilename(`${safeClassName}_Attendance_${selectedMonthName}_${selectedYear}.pdf`);
   };
 
   // 4. Export Individual Student Performance Report PDF
@@ -101,8 +104,9 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
 
     const doc = generateStudentProgressReportPDF(school, classInfo, teacher, targetStudent, exams, examMarksMap, attendance);
     setPreviewDoc(doc);
-    setPreviewTitle(`Student Progress Report: ${targetStudent.name}`);
-    setPreviewFilename(`ReportCard_Roll${targetStudent.rollNo}_${targetStudent.name.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
+    setPreviewTitle(`Student Progress Report: ${targetStudent.name || 'Student'}`);
+    const safeStudentName = (targetStudent.name || 'Student').replace(/[^a-zA-Z0-9]/g, '_');
+    setPreviewFilename(`ReportCard_Roll${targetStudent.rollNo || 0}_${safeStudentName}.pdf`);
   };
 
   return (

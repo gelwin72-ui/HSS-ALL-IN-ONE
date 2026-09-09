@@ -141,7 +141,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           name: user.displayName || 'Teacher',
           email: cleanEmail,
           phone: '',
-          schoolName: currentSchool.schoolName || 'Govt Higher Secondary School',
+          schoolName: currentSchool.schoolName || "St. Sebastian's Higher Secondary School",
           schoolCode: cleanSchoolCode,
           designation: 'Higher Secondary Teacher',
           password: 'google-auth-linked',
@@ -786,7 +786,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           active: true,
           displayName: isAdmin2 ? 'Joice George' : 'School Administrator',
           adminName: isAdmin2 ? 'Joice George' : 'School Administrator',
-          schoolName: "St. Sebastain's Higher Secondary School"
+          schoolName: "St. Sebastian's Higher Secondary School"
         };
         // Background provision
         try {
@@ -809,7 +809,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
               active: true,
               displayName: 'School Administrator',
               adminName: 'School Administrator',
-              schoolName: "St. Sebastain's Higher Secondary School"
+              schoolName: "St. Sebastian's Higher Secondary School"
             };
           }
         } catch (docErr: any) {
@@ -820,7 +820,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
             active: true,
             displayName: 'School Administrator',
             adminName: 'School Administrator',
-            schoolName: "St. Sebastain's Higher Secondary School"
+            schoolName: "St. Sebastian's Higher Secondary School"
           };
         }
       }
@@ -874,7 +874,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       const adminAccount: SchoolAdminAccount = {
         id: authUser.uid,
         adminName: userData.displayName || userData.adminName || userData.name || 'School Administrator',
-        schoolName: userData.schoolName || StorageService.getSchoolProfile().schoolName || "St. Sebastain's Higher Secondary School",
+        schoolName: userData.schoolName || StorageService.getSchoolProfile().schoolName || "St. Sebastian's Higher Secondary School",
         schoolCode: cleanSchoolCode,
         email: cleanGmail,
         phone: userData.phone || '',

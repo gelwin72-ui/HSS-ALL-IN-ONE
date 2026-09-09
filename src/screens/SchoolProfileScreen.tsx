@@ -147,7 +147,7 @@ export const SchoolProfileScreen: React.FC<SchoolProfileScreenProps> = ({
                 value={formDataSchool.schoolName}
                 onChange={e => setFormDataSchool({ ...formDataSchool, schoolName: e.target.value })}
                 className="w-full px-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] disabled:bg-[#0F1115]/50 disabled:border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition"
-                placeholder="e.g. Govt. Model Higher Secondary School"
+                placeholder="e.g. St. Sebastian's Higher Secondary School"
               />
             </div>
 
@@ -207,7 +207,7 @@ export const SchoolProfileScreen: React.FC<SchoolProfileScreenProps> = ({
                 value={formDataSchool.principalName}
                 onChange={e => setFormDataSchool({ ...formDataSchool, principalName: e.target.value })}
                 className="w-full px-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] disabled:bg-[#0F1115]/50 disabled:border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition"
-                placeholder="e.g. Dr. K. Radhakrishnan Nair"
+                placeholder="e.g. Principal"
               />
             </div>
 

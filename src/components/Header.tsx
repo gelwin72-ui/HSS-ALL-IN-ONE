@@ -24,6 +24,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 interface HeaderProps {
   schoolName: string;
   schoolCode?: string;
+  principalName?: string;
   classNameStr: string;
   classesList?: ClassItem[];
   activeClassId?: string;
@@ -42,6 +43,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   schoolName,
   schoolCode,
+  principalName,
   classNameStr,
   classesList = [],
   activeClassId,
@@ -235,8 +237,10 @@ export const Header: React.FC<HeaderProps> = ({
                   </div>
                 )}
               </div>
-              <div className="flex items-center gap-1.5 text-[11px] text-gray-400 font-medium">
-                <span className="truncate max-w-[140px] sm:max-w-xs">{schoolName || 'School Name'}</span>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-gray-400 font-medium">
+                <span className="truncate max-w-[180px] sm:max-w-xs">{schoolName || "St. Sebastian's Higher Secondary School"}</span>
+                <span className="text-slate-600 hidden sm:inline">•</span>
+                <span className="text-slate-400 shrink-0">Principal: {principalName || 'Principal'}</span>
                 {schoolCode && (
                   <span className="text-[10px] font-mono text-amber-400/90 font-bold shrink-0 bg-amber-400/10 px-1.5 py-0.2 rounded border border-amber-400/20">
                     {schoolCode}

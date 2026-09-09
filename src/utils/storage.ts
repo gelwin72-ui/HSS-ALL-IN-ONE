@@ -86,10 +86,10 @@ export const TIMETABLE_DAYS: TimetableDay[] = [
 
 export const DEFAULT_SCHOOL_ADMIN: SchoolAdminAccount = {
   id: '',
-  schoolName: '',
+  schoolName: "St. Sebastian's Higher Secondary School",
   schoolCode: '',
   adminPassword: '',
-  adminName: '',
+  adminName: 'Principal',
   designation: 'Principal & School Administrator',
   email: '',
   phone: '',
@@ -102,12 +102,12 @@ export const DEFAULT_TEACHER_ACCOUNTS: TeacherAccount[] = [];
 export const DEFAULT_PRINCIPAL_BROADCASTS: PrincipalBroadcast[] = [];
 
 export const DEFAULT_SCHOOL_PROFILE: SchoolProfile = {
-  schoolName: '',
+  schoolName: "St. Sebastian's Higher Secondary School",
   schoolAddress: '',
   schoolCode: '',
   schoolPhone: '',
   schoolEmail: '',
-  principalName: '',
+  principalName: 'Principal',
   principalPhone: ''
 };
 
@@ -178,7 +178,29 @@ export const StorageService = {
   getSchoolProfile(): SchoolProfile {
     try {
       const val = localStorage.getItem(STORAGE_KEYS.SCHOOL_PROFILE);
-      return val ? JSON.parse(val) : DEFAULT_SCHOOL_PROFILE;
+      if (val) {
+        const parsed = JSON.parse(val);
+        const storedName = parsed.schoolName;
+        const isObsoleteName = !storedName ||
+          storedName === "St.Sebastian's Higher Secondary School" ||
+          storedName === "St. Sebastain's Higher Secondary School" ||
+          storedName === 'Govt. Model HSS' ||
+          storedName === 'Govt Higher Secondary School' ||
+          storedName === 'School Name' ||
+          storedName === 'HIGHER SECONDARY SCHOOL';
+        const normalizedName = isObsoleteName
+          ? "St. Sebastian's Higher Secondary School"
+          : storedName;
+        const storedPrincipal = parsed.principalName;
+        const normalizedPrincipal = (storedPrincipal && storedPrincipal.trim()) ? storedPrincipal : 'Principal';
+        return {
+          ...DEFAULT_SCHOOL_PROFILE,
+          ...parsed,
+          schoolName: normalizedName,
+          principalName: normalizedPrincipal
+        };
+      }
+      return DEFAULT_SCHOOL_PROFILE;
     } catch {
       return DEFAULT_SCHOOL_PROFILE;
     }
