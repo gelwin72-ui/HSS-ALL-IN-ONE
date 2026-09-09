@@ -38,7 +38,7 @@ export const ExamProgressScreen: React.FC<ExamProgressScreenProps> = ({
 
   // Calculate individual student trajectory across all exams
   const studentExamTrajectory = exams.map(exam => {
-    const markData = examMarksMap[exam.id]?.marks[selectedStudent?.id || ''];
+    const markData = examMarksMap[exam.id]?.marks?.[selectedStudent?.id || ''];
     const totals = calculateStudentTotals(exam, markData);
     return {
       exam,

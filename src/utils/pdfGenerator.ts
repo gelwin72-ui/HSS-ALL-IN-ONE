@@ -71,7 +71,7 @@ function addHeader(
 }
 
 function addFooter(doc: jsPDF, teacher: TeacherInfo, principalName?: string) {
-  const pageCount = (doc.internal as any).getNumberOfPages();
+  const pageCount = typeof doc.getNumberOfPages === 'function' ? doc.getNumberOfPages() : (((doc.internal as any)?.getNumberOfPages ? (doc.internal as any).getNumberOfPages() : 1) || 1);
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
 
@@ -183,7 +183,7 @@ export function generateExamReportPDF(
   });
 
   // Summary box below table
-  const finalY = (doc as any).lastAutoTable.finalY + 6;
+  const finalY = ((doc as any).lastAutoTable?.finalY ?? 120) + 6;
   const pageWidth = doc.internal.pageSize.getWidth();
 
   if (finalY < doc.internal.pageSize.getHeight() - 40) {
@@ -275,7 +275,7 @@ export function generateStudentProgressReportPDF(
   });
 
   // Academic Exam Marks breakdown
-  const examSectionY = (doc as any).lastAutoTable.finalY + 8;
+  const examSectionY = ((doc as any).lastAutoTable?.finalY ?? 90) + 8;
   doc.setFontSize(10.5);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...PRIMARY_COLOR);
@@ -285,7 +285,7 @@ export function generateStudentProgressReportPDF(
 
   exams.forEach(exam => {
     const marksRecord = examMarksMap[exam.id];
-    const markData = marksRecord?.marks[student.id];
+    const markData = marksRecord?.marks?.[student.id];
     const totals = calculateStudentTotals(exam, markData);
 
     const subDetails = exam.subjects.map(s => {
@@ -325,7 +325,7 @@ export function generateStudentProgressReportPDF(
   });
 
   // Teacher Remarks Box
-  const finalTableY = (doc as any).lastAutoTable.finalY + 8;
+  const finalTableY = ((doc as any).lastAutoTable?.finalY ?? 120) + 8;
   if (finalTableY < doc.internal.pageSize.getHeight() - 45) {
     doc.setFillColor(248, 250, 252);
     doc.rect(14, finalTableY, pageWidth - 28, 18, 'F');
@@ -513,7 +513,7 @@ export function generateFullSchoolDataPDF(
   });
 
   // 2. Student Master List (Excludes admission numbers and mobile numbers)
-  const studentsY = (doc as any).lastAutoTable.finalY + 8;
+  const studentsY = ((doc as any).lastAutoTable?.finalY ?? 90) + 8;
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...PRIMARY_COLOR);

@@ -102,10 +102,17 @@ export const db = database;
 // Firestore-compatible wrappers backed by Firebase Realtime Database
 export function doc(_db: any, ...pathSegments: string[]) {
   const fullPath = pathSegments.filter(Boolean).join('/');
+  if (!database) return null;
   return ref(database, fullPath);
 }
 
 export async function getDoc(dbRef: any) {
+  if (!dbRef || !database) {
+    return {
+      exists: () => false,
+      data: () => null
+    };
+  }
   const snapshot: DataSnapshot = await get(dbRef);
   return {
     exists: () => snapshot.exists(),
@@ -114,6 +121,7 @@ export async function getDoc(dbRef: any) {
 }
 
 export async function setDoc(dbRef: any, data: any, options?: { merge?: boolean }) {
+  if (!dbRef || !database) return;
   if (options?.merge) {
     return await update(dbRef, data);
   } else {
@@ -122,10 +130,12 @@ export async function setDoc(dbRef: any, data: any, options?: { merge?: boolean 
 }
 
 export async function updateDoc(dbRef: any, data: any) {
+  if (!dbRef || !database) return;
   return await update(dbRef, data);
 }
 
 export async function deleteDoc(dbRef: any) {
+  if (!dbRef || !database) return;
   return await remove(dbRef);
 }
 

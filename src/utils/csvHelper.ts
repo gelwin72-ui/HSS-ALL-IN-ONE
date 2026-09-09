@@ -252,7 +252,7 @@ export function exportExamMarksToCSV(exam: Exam, marksRecord: ExamMarksRecord | 
   const headers = ['Roll No', 'Admission No', 'Student Name', ...subjectHeaders, 'Total Marks', 'Max Total', 'Percentage', 'Grade', 'Rank', 'Status'];
 
   const rows = sortedStudents.map(st => {
-    const markData = marksRecord?.marks[st.id];
+    const markData = marksRecord?.marks?.[st.id];
     const subValues = exam.subjects.map(sub => {
       if (markData?.isAbsent?.[sub.id]) return 'AB';
       const m = markData?.marks?.[sub.id];

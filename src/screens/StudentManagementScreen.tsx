@@ -1179,7 +1179,7 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
                 ) : (
                   <div className="space-y-2">
                     {exams.map(exam => {
-                      const markData = examMarksMap[exam.id]?.marks[selectedStudent.id];
+                      const markData = examMarksMap[exam.id]?.marks?.[selectedStudent.id];
                       return (
                         <div
                           key={exam.id}
