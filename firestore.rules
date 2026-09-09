@@ -1,0 +1,128 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return getUserDoc().data;
+    }
+
+    // Check if the current authenticated user is an active School Admin for the given schoolCode
+    function isSchoolAdmin(targetSchoolCode) {
+      return isSignedIn() &&
+             userExists() &&
+             (getUserData().role == 'SCHOOL_ADMIN' || getUserData().role == 'admin') &&
+             getUserData().active == true &&
+             (targetSchoolCode == '' || getUserData().schoolCode == targetSchoolCode);
+    }
+
+    // Check if the user belongs to the specified schoolCode
+    function isMemberOfSchool(targetSchoolCode) {
+      return isSignedIn() &&
+             userExists() &&
+             (getUserData().schoolCode == targetSchoolCode || isSchoolAdmin(targetSchoolCode));
+    }
+
+    // 1. Users Collection (Keyed by Firebase Authentication UID or email)
+    match /users/{userId} {
+      // User can read their own profile; School Admins can read user profiles under their management
+      allow read: if isOwner(userId) ||
+                     (isSignedIn() && request.auth.token.email != null && (resource == null || resource.data.email == request.auth.token.email)) ||
+                     isSchoolAdmin('');
+
+      // Create rule: Users can create their own profile upon authentication
+      allow create: if isOwner(userId) || isSchoolAdmin('');
+
+      // Update rule: Users cannot escalate privileges (cannot change role, schoolCode, or active status)
+      allow update: if isOwner(userId) &&
+                       (
+                         !('role' in resource.data) ||
+                         request.resource.data.role == resource.data.role
+                       ) &&
+                       (
+                         !('schoolCode' in resource.data) ||
+                         request.resource.data.schoolCode == resource.data.schoolCode
+                       ) &&
+                       (
+                         !('active' in resource.data) ||
+                         request.resource.data.active == resource.data.active
+                       );
+
+      // Deletion allowed only by an authorized Admin
+      allow delete: if isSchoolAdmin('');
+
+      match /{allSubcollections=**} {
+        allow read, write: if isOwner(userId) || isSchoolAdmin('');
+      }
+    }
+
+    // 2. School-Specific Multi-Tenant Data (Isolated by schoolCode)
+    match /schools/{schoolCode} {
+      allow read: if isMemberOfSchool(schoolCode);
+      allow write: if isSchoolAdmin(schoolCode);
+
+      match /teachers/{teacherId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+      }
+
+      match /activities/{activityId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update, delete: if isSchoolAdmin(schoolCode);
+      }
+
+      match /classes/{classId} {
+        allow read: if isMemberOfSchool(schoolCode);
+        allow write: if isSchoolAdmin(schoolCode);
+      }
+
+      match /{allSubcollections=**} {
+        allow read: if isMemberOfSchool(schoolCode);
+        allow write: if isSchoolAdmin(schoolCode);
+      }
+    }
+
+    // 3. Principal Announcements & Broadcasts (Scoped by schoolCode)
+    match /broadcasts/{broadcastId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn() &&
+                                       isSchoolAdmin(request.resource.data.schoolCode);
+    }
+
+    // 4. Multi-Device Email Accounts Sync
+    match /email_accounts/{emailKey} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isSchoolAdmin('');
+
+      match /{allSubcollections=**} {
+        allow read, write: if isSignedIn();
+      }
+    }
+  }
+}
+
+

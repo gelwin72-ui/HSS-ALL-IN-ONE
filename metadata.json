@@ -1,0 +1,8 @@
+{
+  "name": "HSS ALL IN ONE",
+  "description": "The Complete Smart Assistant for Higher Secondary School Teachers - Manage students, attendance, exams, marks, progress analytics, and PDF reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

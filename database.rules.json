@@ -1,0 +1,32 @@
+{
+  "rules": {
+    "schools": {
+      "$schoolCode": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "users": {
+      "$userId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "email_accounts": {
+      "$emailKey": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "broadcasts": {
+      "$broadcastId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "unauthorizedAttempts": {
+      ".read": "auth != null",
+      ".write": "true"
+    }
+  }
+}
