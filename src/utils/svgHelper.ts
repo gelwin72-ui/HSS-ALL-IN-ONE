@@ -126,8 +126,8 @@ export function exportStudentsToSVG(
   </g>
 
   <!-- School and Header Text -->
-  <text x="${padding + 24}" y="${padding + 40}" class="title">${escapeXML(school?.schoolName || 'HIGHER SECONDARY SCHOOL')}</text>
-  <text x="${padding + 24}" y="${padding + 64}" class="subtitle">${escapeXML(school?.schoolAddress || 'Kerala, India')} • School Code: ${escapeXML(school?.schoolCode || 'HSS-KL')} • Official Student Register</text>
+  <text x="${padding + 24}" y="${padding + 40}" class="title">${escapeXML(school?.schoolName || "St. Sebastian's Higher Secondary School")}</text>
+  <text x="${padding + 24}" y="${padding + 64}" class="subtitle">${escapeXML(school?.schoolAddress || 'Kerala, India')} • School Code: ${escapeXML(school?.schoolCode || 'SSHSS@111213')} • Official Student Register</text>
 
   <!-- Sub Meta Bar -->
   <rect x="${padding + 24}" y="${padding + 82}" width="${width - padding * 2 - 48}" height="32" rx="8" fill="#000000" fill-opacity="0.25" />
@@ -254,8 +254,8 @@ export function exportAttendanceToSVG(
   <!-- Top Header Card -->
   <rect x="${padding}" y="${padding}" width="${dynamicWidth - padding * 2}" height="${headerHeight - 20}" rx="12" fill="url(#attHeaderGrad)" />
 
-  <text x="${padding + 24}" y="${padding + 38}" class="title">${escapeXML(school?.schoolName || 'HIGHER SECONDARY SCHOOL')} — ATTENDANCE REGISTER</text>
-  <text x="${padding + 24}" y="${padding + 62}" class="subtitle">${escapeXML(school?.schoolAddress || 'Kerala, India')} • Official Attendance Vector Export with Full Student Details</text>
+  <text x="${padding + 24}" y="${padding + 38}" class="title">${escapeXML(school?.schoolName || "St. Sebastian's Higher Secondary School")} — ATTENDANCE REGISTER</text>
+  <text x="${padding + 24}" y="${padding + 62}" class="subtitle">${escapeXML(school?.schoolAddress || 'Kerala, India')} • School Code: ${escapeXML(school?.schoolCode || 'SSHSS@111213')} • Official Attendance Vector Export</text>
 
   <!-- Sub Meta Bar -->
   <rect x="${padding + 24}" y="${padding + 78}" width="${dynamicWidth - padding * 2 - 48}" height="32" rx="8" fill="#000000" fill-opacity="0.25" />

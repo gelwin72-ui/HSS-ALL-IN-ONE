@@ -87,7 +87,7 @@ export const TIMETABLE_DAYS: TimetableDay[] = [
 export const DEFAULT_SCHOOL_ADMIN: SchoolAdminAccount = {
   id: '',
   schoolName: "St. Sebastian's Higher Secondary School",
-  schoolCode: '',
+  schoolCode: 'SSHSS@111213',
   adminPassword: '',
   adminName: 'Principal',
   designation: 'Principal & School Administrator',
@@ -104,7 +104,7 @@ export const DEFAULT_PRINCIPAL_BROADCASTS: PrincipalBroadcast[] = [];
 export const DEFAULT_SCHOOL_PROFILE: SchoolProfile = {
   schoolName: "St. Sebastian's Higher Secondary School",
   schoolAddress: '',
-  schoolCode: '',
+  schoolCode: 'SSHSS@111213',
   schoolPhone: '',
   schoolEmail: '',
   principalName: 'Principal',
@@ -193,10 +193,15 @@ export const StorageService = {
           : storedName;
         const storedPrincipal = parsed.principalName;
         const normalizedPrincipal = (storedPrincipal && storedPrincipal.trim()) ? storedPrincipal : 'Principal';
+        const storedCode = parsed.schoolCode;
+        const normalizedCode = (storedCode && storedCode.trim() && storedCode !== 'HSS-07142' && storedCode !== 'HSS-KL' && storedCode !== 'School Code')
+          ? storedCode.trim().toUpperCase()
+          : 'SSHSS@111213';
         return {
           ...DEFAULT_SCHOOL_PROFILE,
           ...parsed,
           schoolName: normalizedName,
+          schoolCode: normalizedCode,
           principalName: normalizedPrincipal
         };
       }
@@ -1186,7 +1191,7 @@ export const StorageService = {
         teacherName: teacher.name,
         teacherPhone: teacher.phone,
         roomNumber: 'Room ' + (100 + periodNum),
-        schoolCode: (teacher.schoolCode || 'HSS-07142').toUpperCase(),
+        schoolCode: (teacher.schoolCode || 'SSHSS@111213').toUpperCase(),
         type: 'lecture',
         notes: `Scheduled class with ${targetClass}`,
         createdAt: new Date().toISOString(),

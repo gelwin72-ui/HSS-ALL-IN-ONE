@@ -29,6 +29,8 @@ import {
 } from 'firebase/database';
 import {
   getFirestore,
+  initializeFirestore,
+  setLogLevel,
   doc as fsDoc,
   getDoc as fsGetDoc,
   setDoc as fsSetDoc,
@@ -122,9 +124,20 @@ export const db = database;
 // Safe Firestore Initialization
 let firestoreInstance: any = null;
 try {
-  firestoreInstance = getFirestore(app);
+  setLogLevel('error');
+} catch {}
+
+try {
+  firestoreInstance = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+    ignoreUndefinedProperties: true
+  });
 } catch (err) {
-  console.warn('[Firebase Firestore] Initialization warning:', err);
+  try {
+    firestoreInstance = getFirestore(app);
+  } catch (e) {
+    console.warn('[Firebase Firestore] Initialization warning:', e);
+  }
 }
 export const firestore: Firestore = firestoreInstance;
 

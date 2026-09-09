@@ -217,7 +217,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       return;
     }
     if (!signupSchoolCode.trim()) {
-      setErrorMsg('Please enter your unique School Code (e.g. HSS-07142).');
+      setErrorMsg('Please enter your unique School Code (e.g. SSHSS@111213).');
       return;
     }
     if (!signupDob) {
@@ -1294,7 +1294,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       id="signup-school"
                       value={signupSchool}
                       onChange={e => setSignupSchool(e.target.value)}
-                      placeholder="e.g. Govt Higher Secondary School"
+                      placeholder="e.g. St. Sebastian's Higher Secondary School"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition"
                     />
                   </div>
@@ -1312,7 +1312,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       id="signup-schoolcode"
                       value={signupSchoolCode}
                       onChange={e => setSignupSchoolCode(e.target.value.toUpperCase())}
-                      placeholder="HSS-07142"
+                      placeholder="SSHSS@111213"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-mono uppercase"
                     />
                   </div>
@@ -1541,7 +1541,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     <Hash className="w-3.5 h-3.5 text-purple-400" />
                     School Code (Optional if email is used)
                   </label>
-                  <span className="text-[10px] text-purple-400 font-mono">e.g. HSS-07142</span>
+                  <span className="text-[10px] text-purple-400 font-mono">e.g. SSHSS@111213</span>
                 </div>
                 <div className="relative">
                   <School className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
@@ -1550,7 +1550,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     id="login-schoolcode"
                     value={loginSchoolCode}
                     onChange={e => setLoginSchoolCode(e.target.value.toUpperCase())}
-                    placeholder="Enter School Code (e.g. HSS-07142)"
+                    placeholder="Enter School Code (e.g. SSHSS@111213)"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-mono uppercase"
                   />
                 </div>
@@ -1689,7 +1689,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       id="admin-schoolcode"
                       value={adminSchoolCode}
                       onChange={e => setAdminSchoolCode(e.target.value.toUpperCase())}
-                      placeholder="e.g. HSS-07142"
+                      placeholder="e.g. SSHSS@111213"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition font-mono uppercase"
                     />
                   </div>
@@ -1830,7 +1830,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     required
                     value={resetSchoolCode}
                     onChange={e => setResetSchoolCode(e.target.value.toUpperCase())}
-                    placeholder="e.g. HSS-07142"
+                    placeholder="e.g. SSHSS@111213"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition font-mono uppercase"
                   />
                 </div>
