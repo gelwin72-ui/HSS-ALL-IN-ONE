@@ -1,15 +1,11 @@
 import express from "express";
 import path from "path";
-import { fileURLToPath } from "url";
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getDatabase } from "firebase-admin/database";
 import { getMessaging } from "firebase-admin/messaging";
 import { createServer as createViteServer } from "vite";
 
 async function startServer() {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-  
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
   
@@ -117,11 +113,11 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // Serve static files from dist
-    const distPath = path.join(__dirname, 'dist');
+    // Serve static files from dist using process.cwd() to correctly locate dist
+    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     // SPA fallback for all other routes
-    app.get('*all', (req, res) => {
+    app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

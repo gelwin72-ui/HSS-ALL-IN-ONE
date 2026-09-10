@@ -98,6 +98,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
   const [signupSection, setSignupSection] = useState('A');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupDob, setSignupDob] = useState('');
+  const [signupIsClassTeacher, setSignupIsClassTeacher] = useState(true);
 
   // Teacher Login Form State
   const [loginSchoolCode, setLoginSchoolCode] = useState('');
@@ -142,7 +143,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         const cleanSchoolCode = currentSchool.schoolCode || 'HSS-' + Math.floor(10000 + Math.random() * 90000);
 
         activeTeacher = {
-          id: `teach-${Date.now()}`,
+          id: user.uid || 'teacher-' + Date.now(),
           name: user.displayName || 'Teacher',
           email: cleanEmail,
           phone: '',
@@ -240,12 +241,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     const assignedClassName = `${effectiveStandard} ${effectiveStream} ${signupSection}`.trim();
     const cleanSchoolCode = (signupSchoolCode.trim() || 'SSHSS@111213').toUpperCase();
     const cleanEmail = signupEmail.trim().toLowerCase();
+    let firebaseUid = 'teacher-' + Date.now();
+    const initialClassId = 'class-' + Date.now();
 
     setIsLoading(true);
     setLoadingText('Securing credentials & initializing multi-device sync...');
 
     try {
-      let firebaseUid = `teach-${Date.now()}`;
       if (cleanEmail) {
         try {
           const cred = await createUserWithEmailAndPassword(auth, cleanEmail, signupPassword);
@@ -379,6 +381,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
             active: true,
             createdAt: new Date().toISOString()
           });
+
+          const teacherSignupsRef = ref(database, `teacherSignups/${firebaseUid}`);
+          await set(teacherSignupsRef, {
+            fullName: signupName.trim(),
+            email: cleanEmail,
+            dateOfBirth: signupDob,
+            mobileNumber: signupPhone.trim(),
+            schoolOrCollegeName: signupSchool.trim(),
+            schoolCode: cleanSchoolCode,
+            subject: effectiveSubject,
+            isClassTeacher: signupIsClassTeacher,
+            className: signupIsClassTeacher ? effectiveStandard : '',
+            stream: signupIsClassTeacher ? effectiveStream : '',
+            section: signupIsClassTeacher ? signupSection : '',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
         }
       } catch (rtdbErr) {
         console.warn('RTDB user profile write note:', rtdbErr);
@@ -397,7 +416,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
 
       // Automatically register the first class created during signup if standard and section are provided
       if (effectiveStandard && signupSection) {
-        const initialClassId = `cls-${firebaseUid.slice(0, 6)}-${Date.now().toString(36)}`;
         const initialClass: ClassItem = {
           id: initialClassId,
           className: assignedClassName,
@@ -1227,23 +1245,23 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
             <RefreshCw className="w-5 h-5 text-purple-400 animate-spin shrink-0" />
             <span className="font-semibold">{loadingText || 'Syncing data...'}</span>
           </div>
-        )}
 
+        )}
         {/* Feedback Alerts */}
         {errorMsg && (
           <div className="p-4 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-rose-300 flex items-center gap-3 text-xs sm:text-sm animate-fade-in shadow-lg">
             <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
             <span>{errorMsg}</span>
           </div>
-        )}
 
+        )}
         {successMsg && (
           <div className="p-4 rounded-2xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 flex items-center gap-3 text-xs sm:text-sm animate-fade-in shadow-lg">
             <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
             <span>{successMsg}</span>
           </div>
-        )}
 
+        )}
         {/* Main Form Card */}
         <div className="rounded-3xl bg-[#1A1C23] border border-[#2D3139] p-5 sm:p-7 shadow-2xl space-y-5">
           {/* 1. TEACHER SIGN UP FORM */}
@@ -1374,7 +1392,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       required
                       id="signup-schoolcode"
                       value={signupSchoolCode}
-                      onChange={e => setSignupSchoolCode(e.target.value.toUpperCase())}
+                      onChange={e => setSignupSchoolCode(e.target.value)}
                       placeholder="Enter your school code"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-mono uppercase"
                     />
@@ -1420,12 +1438,26 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                 </div>
               </div>
 
-              {/* Assigned Class Standard, Stream & Section */}
+                            {/* Assigned Class Standard, Stream & Section */}
               <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] space-y-3">
                 <span className="text-[11px] font-bold text-purple-300 uppercase tracking-wider block">
                   Assigned Class Details
                 </span>
+                
+                <div className="flex items-center gap-2 mb-2">
+                  <input 
+                    type="checkbox" 
+                    id="signup-isClassTeacher"
+                    checked={signupIsClassTeacher}
+                    onChange={e => setSignupIsClassTeacher(e.target.checked)}
+                    className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 bg-[#1A1C23] border-[#2D3139]"
+                  />
+                  <label htmlFor="signup-isClassTeacher" className="text-[11px] font-bold text-slate-300 cursor-pointer">
+                    I am a Class Teacher
+                  </label>
+                </div>
 
+                {signupIsClassTeacher && (
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
                     <label className="block text-[10px] font-semibold text-slate-400 mb-1">Standard</label>
@@ -1450,7 +1482,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       />
                     )}
                   </div>
-
                   <div>
                     <label className="block text-[10px] font-semibold text-slate-400 mb-1">Stream</label>
                     <select
@@ -1475,7 +1506,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       />
                     )}
                   </div>
-
                   <div>
                     <label className="block text-[10px] font-semibold text-slate-400 mb-1">Section</label>
                     <input
@@ -1487,6 +1517,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     />
                   </div>
                 </div>
+                )}
               </div>
 
               {/* Password */}
@@ -1507,7 +1538,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1526,8 +1556,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
-          )}
 
+          )}
           {/* 2. TEACHER LOGIN FORM */}
           {mode === 'login' && (
             <form onSubmit={handleTeacherLogin} className="space-y-4">
@@ -1584,7 +1614,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     type="text"
                     id="login-schoolcode"
                     value={loginSchoolCode}
-                    onChange={e => setLoginSchoolCode(e.target.value.toUpperCase())}
+                    onChange={e => setLoginSchoolCode(e.target.value)}
                     placeholder="Enter your school code"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-mono uppercase"
                   />
@@ -1635,7 +1665,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   />
                   <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1668,8 +1697,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
-          )}
 
+          )}
           {/* 3. SCHOOL ADMIN LOGIN FORM */}
           {mode === 'admin' && (
             <div className="space-y-4">
@@ -1723,7 +1752,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       required
                       id="admin-schoolcode"
                       value={adminSchoolCode}
-                      onChange={e => setAdminSchoolCode(e.target.value.toUpperCase())}
+                      onChange={e => setAdminSchoolCode(e.target.value)}
                       placeholder="Enter your school code"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition font-mono uppercase"
                     />
@@ -1739,7 +1768,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
-                      onClick={() => setAdminDesignation('Principal')}
                       className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer text-center ${
                         adminDesignation === 'Principal'
                           ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-md'
@@ -1750,7 +1778,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     </button>
                     <button
                       type="button"
-                      onClick={() => setAdminDesignation('Headmaster')}
                       className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer text-center ${
                         adminDesignation === 'Headmaster'
                           ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-md'
@@ -1761,7 +1788,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     </button>
                     <button
                       type="button"
-                      onClick={() => setAdminDesignation('Headmistress')}
                       className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer text-center ${
                         adminDesignation === 'Headmistress'
                           ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-md'
@@ -1796,7 +1822,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     <button
                       type="button"
                       id="btn-toggle-admin-password"
-                      onClick={() => setShowAdminPassword(!showAdminPassword)}
                       className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
                     >
                       {showAdminPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1832,8 +1857,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                 </button>
               </form>
             </div>
-          )}
 
+          )}
           {/* 4. PASSWORD RESET & SETTINGS RECOVERY FORM */}
           {mode === 'reset' && (
             <form onSubmit={handlePasswordReset} className="space-y-4 animate-fade-in">
@@ -1855,7 +1880,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                 <div className="grid grid-cols-2 gap-2 bg-[#1A1C23] p-1 rounded-xl border border-[#2D3139]">
                   <button
                     type="button"
-                    onClick={() => setResetRole('teacher')}
                     className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
                       resetRole === 'teacher'
                         ? 'bg-purple-600 text-white shadow-md'
@@ -1866,7 +1890,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   </button>
                   <button
                     type="button"
-                    onClick={() => setResetRole('admin')}
                     className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
                       resetRole === 'admin'
                         ? 'bg-amber-600 text-white shadow-md'
@@ -1907,7 +1930,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     type="text"
                     required
                     value={resetSchoolCode}
-                    onChange={e => setResetSchoolCode(e.target.value.toUpperCase())}
+                    onChange={e => setResetSchoolCode(e.target.value)}
                     placeholder="e.g. SSHSS@111213"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition font-mono uppercase"
                   />
@@ -1949,7 +1972,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   />
                   <button
                     type="button"
-                    onClick={() => setShowResetPassword(!showResetPassword)}
                     className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
                   >
                     {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1974,7 +1996,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   />
                   <button
                     type="button"
-                    onClick={() => setShowConfirmResetPassword(!showConfirmResetPassword)}
                     className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
                   >
                     {showConfirmResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
