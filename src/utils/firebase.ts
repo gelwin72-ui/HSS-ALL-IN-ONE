@@ -124,7 +124,7 @@ export const db = database;
 // Safe Firestore Initialization
 let firestoreInstance: any = null;
 try {
-  setLogLevel('error');
+  setLogLevel('silent');
 } catch {}
 
 try {
