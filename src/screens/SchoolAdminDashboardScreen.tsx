@@ -74,7 +74,7 @@ import {
   AuditLogItem,
   TeacherActivityItem
 } from '../types';
-import { StorageService, DEFAULT_PERIOD_TIMINGS, TIMETABLE_DAYS } from '../utils/storage';
+import { StorageService, DEFAULT_PERIOD_TIMINGS, TIMETABLE_DAYS, registerStorageMutationListener } from '../utils/storage';
 import { db, doc, setDoc, handleFirestoreError, OperationType } from '../utils/firebase';
 import { CloudSync } from '../utils/cloudSync';
 
@@ -235,29 +235,64 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   const [activityTypeFilter, setActivityTypeFilter] = useState<string>('ALL');
   const [activitySearchQuery, setActivitySearchQuery] = useState('');
 
-  // Real-time Firestore Sync for School Teachers, Classes, and Activities
+  // Register storage mutation listener so state re-renders immediately on any storage change
+  React.useEffect(() => {
+    const unsub = registerStorageMutationListener(() => {
+      setMutationCount(c => c + 1);
+    });
+    return unsub;
+  }, []);
+
+  // Real-time Cloud Sync for School Teachers, Classes, Activities, Broadcasts, Timetables, Profile, Audit Logs
   React.useEffect(() => {
     if (!activeSchoolCode) return;
 
-    // 1. Subscribe to real-time teacher roster for this school code from Firestore
+    // 1. Subscribe to real-time teacher roster
     const unsubTeachers = CloudSync.listenToSchoolTeachers(activeSchoolCode, (teachersList) => {
       setRemoteTeachers(teachersList);
     });
 
-    // 2. Subscribe to real-time classes for this school code from Firestore
+    // 2. Subscribe to real-time classes
     const unsubClasses = CloudSync.listenToSchoolClasses(activeSchoolCode, (classList) => {
       setRemoteClasses(classList);
     });
 
-    // 3. Subscribe to real-time teacher activities for this school code from Firestore
+    // 3. Subscribe to real-time teacher activities
     const unsubActivities = CloudSync.listenToSchoolActivities(activeSchoolCode, (activities) => {
       setRealtimeActivities(activities);
+    });
+
+    // 4. Subscribe to real-time principal broadcasts
+    const unsubBroadcasts = CloudSync.listenToSchoolBroadcasts(activeSchoolCode, () => {
+      setMutationCount(c => c + 1);
+    });
+
+    // 5. Subscribe to real-time timetables
+    const unsubTimetables = CloudSync.listenToSchoolTimetables(activeSchoolCode, (slots) => {
+      setAdminTimetables(slots);
+    });
+
+    // 6. Subscribe to real-time school profile
+    const unsubProfile = CloudSync.listenToSchoolProfile(activeSchoolCode, (prof) => {
+      if (prof && prof.schoolName) {
+        setSchoolProfile(prof);
+        if (prof.principalName) setAdminName(prof.principalName);
+      }
+    });
+
+    // 7. Subscribe to real-time audit logs
+    const unsubAuditLogs = CloudSync.listenToSchoolAuditLogs(activeSchoolCode, (logs) => {
+      setAuditLogs(logs);
     });
 
     return () => {
       unsubTeachers();
       unsubClasses();
       unsubActivities();
+      unsubBroadcasts();
+      unsubTimetables();
+      unsubProfile();
+      unsubAuditLogs();
     };
   }, [activeSchoolCode]);
 
@@ -581,7 +616,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   }, [selectedTeacherForDossier, classesList, mutationCount]);
 
   // Handlers
-  const handleSaveSchoolSettings = (e: React.FormEvent) => {
+  const handleSaveSchoolSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     const updatedProfile = {
       ...schoolProfile,
@@ -589,6 +624,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     };
     StorageService.saveSchoolProfile(updatedProfile);
     setSchoolProfile(updatedProfile);
+    await CloudSync.saveSchoolProfileToSchool(activeSchoolCode, updatedProfile);
 
     const admins = StorageService.getSchoolAdmins();
     const idx = admins.findIndex(a => a.id === admin.id || a.schoolCode === admin.schoolCode);
@@ -628,6 +664,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     };
 
     StorageService.addPrincipalBroadcast(newBroadcast);
+    await CloudSync.saveBroadcastToSchool(activeSchoolCode, newBroadcast);
 
     try {
       const docRef = doc(db, 'broadcasts', newBroadcast.id);
@@ -648,7 +685,14 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
     setBroadcastTitle('');
     setBroadcastMessage('');
-    showToast(`Broadcast "${newBroadcast.title}" sent to all teachers!`);
+    showToast('Broadcast directive sent and synchronized with Cloud!');
+    triggerRefresh();
+  };
+
+  const handleDeleteBroadcast = async (broadcastId: string) => {
+    StorageService.deletePrincipalBroadcast(broadcastId);
+    await CloudSync.deleteBroadcastFromSchool(activeSchoolCode, broadcastId);
+    showToast('Broadcast directive deleted.');
     triggerRefresh();
   };
 
@@ -959,7 +1003,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     setIsAdminTimetableModalOpen(true);
   };
 
-  const handleSaveAdminSlot = (e: React.FormEvent) => {
+  const handleSaveAdminSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adminSlotFormData.subject.trim()) {
       showToast('Please enter a subject name.');
@@ -990,21 +1034,24 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     };
 
     StorageService.saveTimetableSlot(slotPayload);
+    await CloudSync.saveTimetableSlotToSchool(activeSchoolCode, slotPayload);
     refreshAdminTimetables();
     setIsAdminTimetableModalOpen(false);
     showToast(adminEditingSlot ? 'Timetable period updated!' : 'New period assigned to teacher schedule!');
   };
 
-  const handleDeleteAdminSlot = (slotId: string) => {
+  const handleDeleteAdminSlot = async (slotId: string) => {
     StorageService.deleteTimetableSlot(slotId);
+    await CloudSync.deleteTimetableSlotFromSchool(activeSchoolCode, slotId);
     refreshAdminTimetables();
     setIsAdminTimetableModalOpen(false);
     showToast('Period slot deleted.');
   };
 
-  const handleAutoGenerateAllTimetables = () => {
+  const handleAutoGenerateAllTimetables = async () => {
     const slots = StorageService.autoGenerateDefaultSchoolTimetable(activeSchoolCode);
     StorageService.saveTimetables(slots);
+    await CloudSync.saveTimetablesToSchool(activeSchoolCode, slots);
     refreshAdminTimetables();
     showToast(`Master Timetable automatically generated with ${slots.length} periods for all teachers!`);
   };
@@ -3665,6 +3712,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                     onClick={() => {
                       if (confirm('Clear all audit logs, login history, and user access records? This will delete all user entry dates, timestamps, users, roles, actions, targets, and activities.')) {
                         StorageService.clearAuditLogs();
+                        CloudSync.clearAuditLogsFromSchool(activeSchoolCode).catch(() => {});
                         setAuditLogs([]);
                         try {
                           localStorage.removeItem('hss_audit_logs_v1');

@@ -37,7 +37,8 @@ import {
   TeacherActivityItem,
   SchoolAdminAccount,
   TimetableSlot,
-  PrincipalBroadcast
+  PrincipalBroadcast,
+  AuditLogItem
 } from '../types';
 import { StorageService, registerStorageMutationListener, setStorageMutationSilenced } from './storage';
 
@@ -936,9 +937,8 @@ class CloudSyncManager {
             const val = d.data();
             if (val) list.push({ ...val, id: val.id || d.id });
           });
-          if (list.length > 0) {
-            onClassesUpdated(list);
-          }
+          StorageService.saveClassesList(list);
+          onClassesUpdated(list);
         }, err => console.warn('Firestore listenToSchoolClasses warning:', err));
       } catch (e) {
         console.warn('Firestore listenToSchoolClasses setup error:', e);
@@ -957,9 +957,8 @@ class CloudSyncManager {
               if (c) list.push(c);
             });
           }
-          if (list.length > 0) {
-            onClassesUpdated(list);
-          }
+          StorageService.saveClassesList(list);
+          onClassesUpdated(list);
         });
       } catch (e) {}
     }
@@ -1042,43 +1041,9 @@ class CloudSyncManager {
           }
 
           const localTeachers = StorageService.getTeacherAccounts();
-          let mutated = false;
-
-          remoteTeachers.forEach(rt => {
-            const idx = localTeachers.findIndex(lt => lt.id === rt.id || (lt.name === rt.name && lt.schoolCode === cleanCode));
-            if (idx >= 0) {
-              localTeachers[idx] = {
-                ...localTeachers[idx],
-                name: rt.name,
-                dob: rt.dob || localTeachers[idx].dob,
-                phone: rt.phone || localTeachers[idx].phone,
-                schoolName: rt.schoolName || localTeachers[idx].schoolName,
-                schoolCode: rt.schoolCode,
-                subject: rt.subject || localTeachers[idx].subject,
-                primarySubject: rt.primarySubject || localTeachers[idx].primarySubject,
-                standard: rt.standard || localTeachers[idx].standard,
-                stream: rt.stream || localTeachers[idx].stream,
-                section: rt.section || localTeachers[idx].section,
-                assignedClass: rt.assignedClass || localTeachers[idx].assignedClass,
-                designation: rt.designation || localTeachers[idx].designation,
-                avatar: rt.avatar || localTeachers[idx].avatar,
-                photoUrl: rt.photoUrl || localTeachers[idx].photoUrl,
-                lastActiveAt: rt.lastActiveAt || localTeachers[idx].lastActiveAt,
-                recentActivity: rt.recentActivity || localTeachers[idx].recentActivity
-              };
-              mutated = true;
-            } else {
-              localTeachers.push({
-                ...rt,
-                email: rt.email || ''
-              });
-              mutated = true;
-            }
-          });
-
-          if (mutated) {
-            StorageService.saveTeacherAccounts(localTeachers);
-          }
+          const otherSchoolTeachers = localTeachers.filter(lt => (lt.schoolCode || '').trim().toUpperCase() !== cleanCode);
+          const updatedLocalTeachers = [...otherSchoolTeachers, ...remoteTeachers];
+          StorageService.saveTeacherAccounts(updatedLocalTeachers);
 
           onTeachersUpdated(remoteTeachers);
         },
@@ -1154,6 +1119,312 @@ class CloudSyncManager {
         this.unsubscribeSchoolActivitiesSnapshot();
         this.unsubscribeSchoolActivitiesSnapshot = null;
       }
+    };
+  }
+
+  // ------------------ SCHOOL BROADCASTS ------------------
+  public async saveBroadcastToSchool(schoolCode: string, broadcast: PrincipalBroadcast): Promise<boolean> {
+    if (!schoolCode || !broadcast || !broadcast.id) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        await set(ref(database, `schools/${cleanCode}/broadcasts/${broadcast.id}`), broadcast);
+      } catch (e) {}
+    }
+    if (firestore) {
+      try {
+        const docRef = fsDoc(firestore, `schools/${cleanCode}/broadcasts/${broadcast.id}`);
+        await fsSetDoc(docRef, broadcast, { merge: true });
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public async deleteBroadcastFromSchool(schoolCode: string, broadcastId: string): Promise<boolean> {
+    if (!schoolCode || !broadcastId) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        await remove(ref(database, `schools/${cleanCode}/broadcasts/${broadcastId}`));
+      } catch (e) {}
+    }
+    if (firestore) {
+      try {
+        const docRef = fsDoc(firestore, `schools/${cleanCode}/broadcasts/${broadcastId}`);
+        await fsDeleteDoc(docRef);
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public listenToSchoolBroadcasts(
+    schoolCode: string,
+    onBroadcastsUpdated: (broadcasts: PrincipalBroadcast[]) => void
+  ): () => void {
+    if (!schoolCode) return () => {};
+    const cleanCode = schoolCode.trim().toUpperCase();
+
+    let unsubRtdb: (() => void) | null = null;
+    if (database) {
+      try {
+        const bRef = ref(database, `schools/${cleanCode}/broadcasts`);
+        unsubRtdb = onValue(bRef, snapshot => {
+          const list: PrincipalBroadcast[] = [];
+          if (snapshot.exists()) {
+            snapshot.forEach(child => {
+              const b = child.val();
+              if (b) list.push(b);
+            });
+          }
+          list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+          StorageService.savePrincipalBroadcasts(list);
+          onBroadcastsUpdated(list);
+        });
+      } catch (e) {}
+    }
+    return () => {
+      if (unsubRtdb) unsubRtdb();
+    };
+  }
+
+  // ------------------ SCHOOL TIMETABLES ------------------
+  public async saveTimetableSlotToSchool(schoolCode: string, slot: TimetableSlot): Promise<boolean> {
+    if (!schoolCode || !slot || !slot.id) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        await set(ref(database, `schools/${cleanCode}/timetables/${slot.id}`), slot);
+      } catch (e) {}
+    }
+    if (firestore) {
+      try {
+        const docRef = fsDoc(firestore, `schools/${cleanCode}/timetables/${slot.id}`);
+        await fsSetDoc(docRef, slot, { merge: true });
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public async saveTimetablesToSchool(schoolCode: string, slots: TimetableSlot[]): Promise<boolean> {
+    if (!schoolCode) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        const timetablesMap: Record<string, TimetableSlot> = {};
+        slots.forEach(s => {
+          if (s.id) timetablesMap[s.id] = s;
+        });
+        await set(ref(database, `schools/${cleanCode}/timetables`), timetablesMap);
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public async deleteTimetableSlotFromSchool(schoolCode: string, slotId: string): Promise<boolean> {
+    if (!schoolCode || !slotId) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        await remove(ref(database, `schools/${cleanCode}/timetables/${slotId}`));
+      } catch (e) {}
+    }
+    if (firestore) {
+      try {
+        const docRef = fsDoc(firestore, `schools/${cleanCode}/timetables/${slotId}`);
+        await fsDeleteDoc(docRef);
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public listenToSchoolTimetables(
+    schoolCode: string,
+    onTimetablesUpdated: (slots: TimetableSlot[]) => void
+  ): () => void {
+    if (!schoolCode) return () => {};
+    const cleanCode = schoolCode.trim().toUpperCase();
+
+    let unsubRtdb: (() => void) | null = null;
+    if (database) {
+      try {
+        const tRef = ref(database, `schools/${cleanCode}/timetables`);
+        unsubRtdb = onValue(tRef, snapshot => {
+          const list: TimetableSlot[] = [];
+          if (snapshot.exists()) {
+            snapshot.forEach(child => {
+              const s = child.val();
+              if (s) list.push(s);
+            });
+          }
+          StorageService.saveTimetables(list);
+          onTimetablesUpdated(list);
+        });
+      } catch (e) {}
+    }
+    return () => {
+      if (unsubRtdb) unsubRtdb();
+    };
+  }
+
+  // ------------------ SCHOOL STUDENTS ------------------
+  public async saveStudentToSchool(schoolCode: string, student: Student): Promise<boolean> {
+    if (!schoolCode || !student || !student.id) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        await set(ref(database, `schools/${cleanCode}/students/${student.id}`), student);
+      } catch (e) {}
+    }
+    if (firestore) {
+      try {
+        const docRef = fsDoc(firestore, `schools/${cleanCode}/students/${student.id}`);
+        await fsSetDoc(docRef, student, { merge: true });
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public async deleteStudentFromSchool(schoolCode: string, studentId: string): Promise<boolean> {
+    if (!schoolCode || !studentId) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        await remove(ref(database, `schools/${cleanCode}/students/${studentId}`));
+      } catch (e) {}
+    }
+    if (firestore) {
+      try {
+        const docRef = fsDoc(firestore, `schools/${cleanCode}/students/${studentId}`);
+        await fsDeleteDoc(docRef);
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public listenToSchoolStudents(
+    schoolCode: string,
+    onStudentsUpdated: (students: Student[]) => void
+  ): () => void {
+    if (!schoolCode) return () => {};
+    const cleanCode = schoolCode.trim().toUpperCase();
+
+    let unsubRtdb: (() => void) | null = null;
+    if (database) {
+      try {
+        const sRef = ref(database, `schools/${cleanCode}/students`);
+        unsubRtdb = onValue(sRef, snapshot => {
+          const list: Student[] = [];
+          if (snapshot.exists()) {
+            snapshot.forEach(child => {
+              const st = child.val();
+              if (st) list.push(st);
+            });
+          }
+          StorageService.saveStudents(list);
+          onStudentsUpdated(list);
+        });
+      } catch (e) {}
+    }
+    return () => {
+      if (unsubRtdb) unsubRtdb();
+    };
+  }
+
+  // ------------------ SCHOOL PROFILE ------------------
+  public async saveSchoolProfileToSchool(schoolCode: string, profile: SchoolProfile): Promise<boolean> {
+    if (!schoolCode || !profile) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        await set(ref(database, `schools/${cleanCode}/schoolProfile`), profile);
+      } catch (e) {}
+    }
+    if (firestore) {
+      try {
+        const docRef = fsDoc(firestore, `schools/${cleanCode}/schoolProfile/info`);
+        await fsSetDoc(docRef, profile, { merge: true });
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public listenToSchoolProfile(
+    schoolCode: string,
+    onProfileUpdated: (profile: SchoolProfile) => void
+  ): () => void {
+    if (!schoolCode) return () => {};
+    const cleanCode = schoolCode.trim().toUpperCase();
+
+    let unsubRtdb: (() => void) | null = null;
+    if (database) {
+      try {
+        const pRef = ref(database, `schools/${cleanCode}/schoolProfile`);
+        unsubRtdb = onValue(pRef, snapshot => {
+          if (snapshot.exists()) {
+            const prof = snapshot.val() as SchoolProfile;
+            if (prof && prof.schoolName) {
+              StorageService.saveSchoolProfile(prof);
+              onProfileUpdated(prof);
+            }
+          }
+        });
+      } catch (e) {}
+    }
+    return () => {
+      if (unsubRtdb) unsubRtdb();
+    };
+  }
+
+  // ------------------ AUDIT LOGS ------------------
+  public async saveAuditLogToSchool(schoolCode: string, logItem: AuditLogItem): Promise<boolean> {
+    if (!schoolCode || !logItem || !logItem.id) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        await set(ref(database, `schools/${cleanCode}/auditLogs/${logItem.id}`), logItem);
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public async clearAuditLogsFromSchool(schoolCode: string): Promise<boolean> {
+    if (!schoolCode) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    if (database) {
+      try {
+        await remove(ref(database, `schools/${cleanCode}/auditLogs`));
+      } catch (e) {}
+    }
+    return true;
+  }
+
+  public listenToSchoolAuditLogs(
+    schoolCode: string,
+    onAuditLogsUpdated: (logs: AuditLogItem[]) => void
+  ): () => void {
+    if (!schoolCode) return () => {};
+    const cleanCode = schoolCode.trim().toUpperCase();
+
+    let unsubRtdb: (() => void) | null = null;
+    if (database) {
+      try {
+        const aRef = ref(database, `schools/${cleanCode}/auditLogs`);
+        unsubRtdb = onValue(aRef, snapshot => {
+          const list: AuditLogItem[] = [];
+          if (snapshot.exists()) {
+            snapshot.forEach(child => {
+              const item = child.val();
+              if (item) list.push(item);
+            });
+          }
+          list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          StorageService.saveAuditLogs(list);
+          onAuditLogsUpdated(list);
+        });
+      } catch (e) {}
+    }
+    return () => {
+      if (unsubRtdb) unsubRtdb();
     };
   }
 

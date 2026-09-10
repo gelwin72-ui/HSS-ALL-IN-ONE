@@ -21,7 +21,7 @@ import {
   AuditLogItem
 } from '../types';
 
-let onStorageMutationCallback: (() => void) | null = null;
+const storageMutationListeners = new Set<() => void>();
 let isMutationSilenced = false;
 
 export const setStorageMutationSilenced = (silenced: boolean) => {
@@ -29,18 +29,21 @@ export const setStorageMutationSilenced = (silenced: boolean) => {
 };
 
 export const registerStorageMutationListener = (cb: () => void) => {
-  onStorageMutationCallback = cb;
+  storageMutationListeners.add(cb);
+  return () => {
+    storageMutationListeners.delete(cb);
+  };
 };
 
 const notifyMutation = () => {
   if (isMutationSilenced) return;
-  if (onStorageMutationCallback) {
+  storageMutationListeners.forEach(cb => {
     try {
-      onStorageMutationCallback();
+      cb();
     } catch (e) {
       console.warn('Storage mutation callback failed', e);
     }
-  }
+  });
 };
 
 const STORAGE_KEYS = {
@@ -964,6 +967,12 @@ export const StorageService = {
     notifyMutation();
   },
 
+  deletePrincipalBroadcast(id: string) {
+    const list = this.getPrincipalBroadcasts();
+    const updated = list.filter(b => b.id !== id);
+    this.savePrincipalBroadcasts(updated);
+  },
+
   // Upcoming Teacher Birthdays Calculator
   getUpcomingTeacherBirthdays(schoolCode?: string, withinDays: number = 60): Array<{
     teacher: TeacherAccount;
@@ -1542,6 +1551,15 @@ export const StorageService = {
       timestamp: new Date().toISOString()
     };
     this.saveAuditLogs([newEntry, ...current]);
+
+    let code = 'SSHSS@111213';
+    const match = entry.target ? entry.target.match(/\[(.*?)\]/) : null;
+    if (match && match[1]) {
+      code = match[1];
+    }
+    import('./cloudSync').then(m => {
+      m.CloudSync.saveAuditLogToSchool(code, newEntry).catch(() => {});
+    }).catch(() => {});
   },
 
   clearAuditLogs() {
