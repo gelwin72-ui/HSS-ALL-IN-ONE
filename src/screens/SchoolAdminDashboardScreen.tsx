@@ -691,6 +691,18 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     triggerRefresh();
   };
 
+  const handleClearTeacherActivity = async () => {
+    if (confirm('Are you sure you want to permanently clear all recent teacher activity records?')) {
+      const success = await CloudSync.clearSchoolActivities(admin.schoolCode);
+      if (success) {
+        setRealtimeActivities([]);
+        showToast('All teacher activities have been permanently deleted.');
+      } else {
+        showToast('Failed to clear teacher activities. Please try again.');
+      }
+    }
+  };
+
   const handleExportFullJson = () => {
     const jsonStr = StorageService.exportCompleteSchoolData(admin.schoolCode);
     const blob = new Blob([jsonStr], { type: 'application/json' });
@@ -3785,6 +3797,14 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 </div>
 
                 <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={handleClearTeacherActivity}
+                    className="px-3.5 py-2 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/30 text-rose-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Clear Activity</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => {

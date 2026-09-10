@@ -1098,6 +1098,19 @@ class CloudSyncManager {
     };
   }
 
+  public async clearSchoolActivities(schoolCode: string): Promise<boolean> {
+    if (!schoolCode) return false;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    try {
+      const activitiesRefPath = ref(database, `schools/${cleanCode}/activities`);
+      await remove(activitiesRefPath);
+      return true;
+    } catch (e) {
+      console.error('Error clearing school activities:', e);
+      return false;
+    }
+  }
+
   public listenToSchoolActivities(
     schoolCode: string,
     onActivitiesUpdated: (activities: TeacherActivityItem[]) => void
