@@ -884,11 +884,11 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   };
 
   const handleDeleteTeacher = async (teacherId: string, teacherName: string) => {
-    if (confirm(`Are you sure you want to remove teacher ${teacherName} from ${admin.schoolCode}?`)) {
+    if (confirm(`Are you sure you want to delete this teacher? The teacher's account and data will be permanently removed from the School Admin Panel.`)) {
       const ok = StorageService.deleteTeacherAccount(teacherId);
       if (ok) {
         await CloudSync.deleteTeacherFromSchool(admin.schoolCode, teacherId).catch(() => {});
-        showToast(`Teacher ${teacherName} removed.`);
+        showToast(`Teacher deleted successfully.`);
         triggerRefresh();
       } else {
         showToast('Cannot delete the only remaining teacher account.');
