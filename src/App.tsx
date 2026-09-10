@@ -26,6 +26,7 @@ import { AddClassModal } from './components/AddClassModal';
 import { auth, onAuthStateChanged, signOut } from './utils/firebase';
 import { CloudSync } from './utils/cloudSync';
 import { ThemeManager } from './utils/themeHelper';
+import { requestAndSaveFCMToken, removeFCMToken } from './utils/fcm';
 
 // Screens
 import { AuthScreen } from './screens/AuthScreen';
@@ -137,7 +138,8 @@ export function App() {
             // Pull latest cloud state
             await CloudSync.fetchFromCloud(firebaseUser);
             refreshAllState();
-
+            const schoolProfile = StorageService.getSchoolProfile();
+            requestAndSaveFCMToken(firebaseUser.uid, schoolProfile.schoolCode).catch(() => {});
             // Start listening to real-time changes across devices
             CloudSync.startRealtimeSync(firebaseUser, () => {
               refreshAllState();
@@ -149,7 +151,6 @@ export function App() {
         console.warn('Firebase onAuthStateChanged subscription note:', authErr);
       }
     }
-
     return () => {
       if (typeof unsubscribeAuth === 'function') {
         unsubscribeAuth();
@@ -198,6 +199,9 @@ export function App() {
     setAuthRole('teacher');
     setCurrentAdmin(null);
     setIsAuthenticated(true);
+    const uid = account.id || account.uid || auth?.currentUser?.uid || 'user';
+    const schoolCode = account.schoolCode || StorageService.getSchoolProfile().schoolCode;
+    requestAndSaveFCMToken(uid, schoolCode).catch(() => {});
     showToast(`Welcome, ${account.name}! Multi-device sync active.`, 'success');
   };
 
@@ -213,11 +217,19 @@ export function App() {
     setCurrentAdmin(admin);
     setAuthRole('admin');
     setIsAuthenticated(true);
+    const uid = admin.id || auth?.currentUser?.uid || 'admin';
+    const schoolCode = admin.schoolCode || StorageService.getSchoolProfile().schoolCode;
+    requestAndSaveFCMToken(uid, schoolCode).catch(() => {});
     showToast(`Welcome to School Admin Portal, ${admin.adminName || 'Principal'}! Multi-device sync active.`, 'success');
   };
 
   // Teacher Logout / Switch Account Handler
   const handleTeacherLogout = async () => {
+    const currentUser = auth?.currentUser;
+    const schoolProfile = StorageService.getSchoolProfile();
+    if (currentUser) {
+      removeFCMToken(currentUser.uid, schoolProfile.schoolCode).catch(() => {});
+    }
     try {
       await signOut(auth);
     } catch (e) {
@@ -233,6 +245,11 @@ export function App() {
 
   // School Admin Logout Handler
   const handleAdminLogout = () => {
+    const currentUser = auth?.currentUser;
+    const schoolProfile = StorageService.getSchoolProfile();
+    if (currentUser) {
+      removeFCMToken(currentUser.uid, schoolProfile.schoolCode).catch(() => {});
+    }
     CloudSync.clearActiveSyncEmail();
     StorageService.logout();
     setIsAuthenticated(false);
