@@ -54,7 +54,8 @@ import {
   updateProfile,
   database,
   ref,
-  set
+  set,
+  get
 } from '../utils/firebase';
 import { CloudSync } from '../utils/cloudSync';
 
@@ -343,25 +344,44 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         lastActiveAt: new Date().toISOString()
       };
 
-      // Write teacher profile to Firestore under /users/{firebaseUid}
+      // Write teacher profile to Realtime Database
       try {
-        const userDocRef = doc(db, 'users', firebaseUid);
-        await setDoc(userDocRef, {
-          id: firebaseUid,
-          userId: firebaseUid,
-          name: signupName.trim(),
-          email: cleanEmail,
-          phone: signupPhone.trim(),
-          schoolName: signupSchool.trim(),
-          schoolCode: cleanSchoolCode,
-          subject: effectiveSubject,
-          designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
-          role: 'teacher',
-          active: true,
-          createdAt: new Date().toISOString()
-        }, { merge: true });
-      } catch (fsErr) {
-        console.warn('Firestore user profile write note:', fsErr);
+        if (database) {
+          const teacherProfileRef = ref(database, `teachers/${firebaseUid}`);
+          await set(teacherProfileRef, {
+            id: firebaseUid,
+            uid: firebaseUid,
+            name: signupName.trim(),
+            email: cleanEmail,
+            gmail: cleanEmail,
+            phone: signupPhone.trim(),
+            schoolName: signupSchool.trim(),
+            schoolCode: cleanSchoolCode,
+            subject: effectiveSubject,
+            designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
+            role: 'teacher',
+            active: true,
+            createdAt: new Date().toISOString()
+          });
+          const schoolTeacherRef = ref(database, `schools/${cleanSchoolCode}/teachers/${firebaseUid}`);
+          await set(schoolTeacherRef, {
+            id: firebaseUid,
+            uid: firebaseUid,
+            name: signupName.trim(),
+            email: cleanEmail,
+            gmail: cleanEmail,
+            phone: signupPhone.trim(),
+            schoolName: signupSchool.trim(),
+            schoolCode: cleanSchoolCode,
+            subject: effectiveSubject,
+            designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
+            role: 'teacher',
+            active: true,
+            createdAt: new Date().toISOString()
+          });
+        }
+      } catch (rtdbErr) {
+        console.warn('RTDB user profile write note:', rtdbErr);
       }
 
       const registered = StorageService.registerTeacherAccount(newAccount);
@@ -480,13 +500,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     const cleanSchoolCode = (loginSchoolCode || 'SSHSS@111213').trim().toUpperCase();
     const normalizeDob = (d?: string) => (d || '').trim().replace(/[/\s.-]/g, '');
 
-    // Prevent School Admin accounts from being logged in via teacher login
-    if (cleanQuery === 'gelwin72@gmail.com' || cleanQuery === 'joicegeorge1910@gmail.com') {
-      setErrorMsg('This is a School Admin account. Please use the "School Admin Portal" tab to log in.');
-      setIsLoading(false);
-      return;
-    }
-
     setIsLoading(true);
     setLoadingText('Verifying credentials & fetching multi-device data...');
 
@@ -571,7 +584,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         ) || null;
       }
 
-      // 4. If not found locally, look up in Firestore cloud by email
+      // 4. If not found locally, look up in cloud by email
       if (!match && cleanQuery.includes('@')) {
         const timeoutPromise = new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1500));
         try {
@@ -586,6 +599,28 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         } catch (e) {
           console.warn('Cloud fetch timeout or error:', e);
         }
+      }
+
+      // If authenticated via Firebase but no match found, auto-provision teacher profile (supports unified admin/teacher accounts)
+      if (!match && authUid) {
+        const isAdminEmail = cleanQuery === 'joicegeorge1910@gmail.com' || cleanQuery === 'gelwin72@gmail.com';
+        match = {
+          id: authUid,
+          uid: authUid,
+          name: isAdminEmail ? (cleanQuery === 'joicegeorge1910@gmail.com' ? 'Joice George' : 'Gelwin') : 'Teacher',
+          email: cleanQuery,
+          gmail: cleanQuery,
+          phone: '',
+          status: 'active',
+          role: isAdminEmail ? 'teacher+admin' : 'teacher',
+          schoolName: "St. Sebastian's Higher Secondary School",
+          schoolCode: cleanSchoolCode,
+          subject: isAdminEmail ? 'Administration' : 'General',
+          designation: isAdminEmail ? 'Principal / Teacher' : 'Class Teacher',
+          createdAt: new Date().toISOString()
+        };
+        StorageService.registerTeacherAccount(match);
+        CloudSync.saveTeacherToSchool(cleanSchoolCode, match).catch(() => {});
       }
 
       if (!match) {
@@ -823,20 +858,32 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           adminName: isAdmin2 ? 'Joice George' : 'School Administrator',
           schoolName: "St. Sebastian's Higher Secondary School"
         };
-        // Background provision
+        // Background provision to RTDB
         try {
-          const userDocRef = doc(db, 'users', authUser.uid);
-          setDoc(userDocRef, userData, { merge: true }).catch(() => {});
+          if (database) {
+            const adminRef = ref(database, `schools/${cleanSchoolCode}/adminProfile`);
+            set(adminRef, userData).catch(() => {});
+          }
         } catch (e) {}
       } else {
-        // Step 3: Fetch Firestore document with fast 1.2s timeout
+        // Step 3: Fetch RTDB adminProfile or teacher with admin role with fast 1.2s timeout
         try {
           const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1200));
-          const userDocRef = doc(db, 'users', authUser.uid);
-          const snap = await Promise.race([getDoc(userDocRef), timeoutPromise]);
+          const adminRef = ref(database, `schools/${cleanSchoolCode}/adminProfile`);
+          const snap = await Promise.race([get(adminRef), timeoutPromise]);
           if (snap && snap.exists()) {
-            userData = snap.data();
+            userData = snap.val();
           } else {
+            const teacherRef = ref(database, `schools/${cleanSchoolCode}/teachers/${authUser.uid}`);
+            const tSnap = await get(teacherRef);
+            if (tSnap.exists()) {
+              const tVal = tSnap.val();
+              if (tVal.role === 'admin' || tVal.role === 'teacher+admin' || tVal.role === 'SCHOOL_ADMIN') {
+                userData = { ...tVal, role: 'SCHOOL_ADMIN', adminName: tVal.name };
+              }
+            }
+          }
+          if (!userData) {
             userData = {
               email: cleanGmail,
               role: 'SCHOOL_ADMIN',

@@ -10,6 +10,7 @@ export interface TeacherAccount {
   schoolName: string;
   schoolCode: string;
   status?: 'active' | 'inactive' | 'suspended';
+  role?: 'teacher' | 'admin' | 'teacher+admin';
   subject?: string;
   primarySubject?: string;
   standard?: string;
