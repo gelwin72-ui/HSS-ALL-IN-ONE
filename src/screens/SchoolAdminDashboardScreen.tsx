@@ -629,6 +629,16 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     try {
       const docRef = doc(db, 'broadcasts', newBroadcast.id);
       await setDoc(docRef, newBroadcast);
+      fetch('/api/send-fcm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolCode: newBroadcast.schoolCode,
+          title: newBroadcast.title,
+          body: newBroadcast.message,
+          targetAudience: newBroadcast.targetAudience
+        })
+      }).catch(() => {});
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `broadcasts/${newBroadcast.id}`);
     }
