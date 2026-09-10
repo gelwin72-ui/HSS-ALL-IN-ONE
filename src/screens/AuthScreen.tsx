@@ -51,7 +51,10 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
-  updateProfile
+  updateProfile,
+  database,
+  ref,
+  set
 } from '../utils/firebase';
 import { CloudSync } from '../utils/cloudSync';
 
@@ -108,6 +111,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
   const [adminPassword, setAdminPassword] = useState('');
   const [adminDob, setAdminDob] = useState('');
   const [adminPrincipalName, setAdminPrincipalName] = useState('');
+  const [adminDesignation, setAdminDesignation] = useState('Principal');
 
   // 1-Click Google Sign In (Auto Multi-Device Sync)
   const handleGoogleSignIn = async () => {
@@ -229,7 +233,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       return;
     }
 
-    const effectiveSubject = signupSubject === 'Other' ? (customSubject.trim() || 'General') : signupSubject;
+    const effectiveSubject = signupSubject.trim() || 'General';
     const effectiveStandard = signupStandard === 'Other' ? (customStandard.trim() || 'Class 12') : signupStandard;
     const effectiveStream = signupStream === 'Other' ? (customStream.trim() || 'General') : signupStream;
     const assignedClassName = `${effectiveStandard} ${effectiveStream} ${signupSection}`.trim();
@@ -904,21 +908,33 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       // Step 8: ALL CHECKS PASSED -> Authorize and open School Admin Dashboard
       const adminAccount: SchoolAdminAccount = {
         id: authUser.uid,
-        adminName: userData.displayName || userData.adminName || userData.name || 'School Administrator',
-        schoolName: userData.schoolName || StorageService.getSchoolProfile().schoolName || "St. Sebastian's Higher Secondary School",
+        adminName: adminDesignation,
+        schoolName: userData.schoolName || StorageService.getSchoolProfile().schoolName || "St.Sebastian's Higher Secondary School",
         schoolCode: cleanSchoolCode,
         email: cleanGmail,
         phone: userData.phone || '',
+        designation: adminDesignation,
         role: 'admin',
         createdAt: userData.createdAt || new Date().toISOString()
       };
+
+      // Save to Firebase Realtime Database
+      try {
+        if (database) {
+          await set(ref(database, `schools/${cleanSchoolCode}/adminProfile`), adminAccount);
+        }
+      } catch (rtdbErr) {
+        console.warn('Error saving admin profile to RTDB:', rtdbErr);
+      }
 
       // Update school profile in storage
       const currentSchool = StorageService.getSchoolProfile();
       StorageService.saveSchoolProfile({
         ...currentSchool,
         schoolCode: cleanSchoolCode,
-        schoolName: adminAccount.schoolName
+        schoolName: adminAccount.schoolName,
+        principalName: adminDesignation,
+        designation: adminDesignation
       });
 
       // Save admin session
@@ -1294,7 +1310,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       id="signup-school"
                       value={signupSchool}
                       onChange={e => setSignupSchool(e.target.value)}
-                      placeholder="e.g. St. Sebastian's Higher Secondary School"
+                      placeholder="Enter your school name"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition"
                     />
                   </div>
@@ -1312,7 +1328,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       id="signup-schoolcode"
                       value={signupSchoolCode}
                       onChange={e => setSignupSchoolCode(e.target.value.toUpperCase())}
-                      placeholder="SSHSS@111213"
+                      placeholder="Enter your school code"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-mono uppercase"
                     />
                   </div>
@@ -1327,44 +1343,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   </label>
                   <div className="relative">
                     <BookOpen className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                    <select
-                      value={signupSubject}
-                      onChange={e => setSignupSubject(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-medium"
-                    >
-                      <option value="Physics">Physics</option>
-                      <option value="Chemistry">Chemistry</option>
-                      <option value="Biology">Biology</option>
-                      <option value="Mathematics">Mathematics</option>
-                      <option value="Computer Science">Computer Science</option>
-                      <option value="English">English</option>
-                      <option value="Malayalam">Malayalam</option>
-                      <option value="Hindi">Hindi</option>
-                      <option value="Arabic">Arabic</option>
-                      <option value="Sanskrit">Sanskrit</option>
-                      <option value="Commerce">Commerce</option>
-                      <option value="Accountancy">Accountancy</option>
-                      <option value="Economics">Economics</option>
-                      <option value="Business Studies">Business Studies</option>
-                      <option value="History">History</option>
-                      <option value="Political Science">Political Science</option>
-                      <option value="Sociology">Sociology</option>
-                      <option value="Geography">Geography</option>
-                      <option value="Statistics">Statistics</option>
-                      <option value="Zoology">Zoology</option>
-                      <option value="Botany">Botany</option>
-                      <option value="Other">Other - Enter Manually</option>
-                    </select>
-                  </div>
-                  {signupSubject === 'Other' && (
                     <input
                       type="text"
-                      value={customSubject}
-                      onChange={e => setCustomSubject(e.target.value)}
-                      placeholder="Enter subject name"
-                      className="w-full mt-2 px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500"
+                      required
+                      id="signup-subject"
+                      value={signupSubject}
+                      onChange={e => setSignupSubject(e.target.value)}
+                      placeholder="e.g. Physics, Chemistry, Mathematics..."
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-purple-500 transition font-medium"
                     />
-                  )}
+                  </div>
                 </div>
 
                 <div>
@@ -1539,9 +1527,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                     <Hash className="w-3.5 h-3.5 text-purple-400" />
-                    School Code (Optional if email is used)
+                    School Code 
                   </label>
-                  <span className="text-[10px] text-purple-400 font-mono">e.g. SSHSS@111213</span>
+                  <span className="text-[10px] text-purple-400 font-mono"></span>
                 </div>
                 <div className="relative">
                   <School className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
@@ -1550,7 +1538,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     id="login-schoolcode"
                     value={loginSchoolCode}
                     onChange={e => setLoginSchoolCode(e.target.value.toUpperCase())}
-                    placeholder="Enter School Code (e.g. SSHSS@111213)"
+                    placeholder="Enter your school code"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-mono uppercase"
                   />
                 </div>
@@ -1567,7 +1555,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
               {/* Date of Birth */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Date of Birth (Optional) <span className="text-slate-400 text-[10px] font-normal">(e.g. DD/MM/YYYY or DD-MM-YYYY)</span>
+                  Date of Birth <span className="text-slate-400 text-[10px] font-normal">(e.g. DD/MM/YYYY or DD-MM-YYYY)</span>
                 </label>
                 <div className="relative">
                   <Calendar className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
@@ -1689,9 +1677,52 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       id="admin-schoolcode"
                       value={adminSchoolCode}
                       onChange={e => setAdminSchoolCode(e.target.value.toUpperCase())}
-                      placeholder="e.g. SSHSS@111213"
+                      placeholder="Enter your school code"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition font-mono uppercase"
                     />
+                  </div>
+                </div>
+
+                {/* Head of School Designation */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                    <Award className="w-3.5 h-3.5 text-amber-400" />
+                    Head of School Designation *
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAdminDesignation('Principal')}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer text-center ${
+                        adminDesignation === 'Principal'
+                          ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-md'
+                          : 'bg-[#0F1115] border-[#2D3139] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Principal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdminDesignation('Headmaster')}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer text-center ${
+                        adminDesignation === 'Headmaster'
+                          ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-md'
+                          : 'bg-[#0F1115] border-[#2D3139] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Headmaster
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdminDesignation('Headmistress')}
+                      className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer text-center ${
+                        adminDesignation === 'Headmistress'
+                          ? 'bg-amber-600/20 border-amber-500 text-amber-300 shadow-md'
+                          : 'bg-[#0F1115] border-[#2D3139] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Headmistress
+                    </button>
                   </div>
                 </div>
 

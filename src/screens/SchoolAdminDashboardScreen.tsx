@@ -1068,12 +1068,15 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
               <h1 className="text-base sm:text-lg font-black text-white truncate max-w-sm sm:max-w-xl">
                 {schoolProfile.schoolName || admin.schoolName}
               </h1>
-              {(admin.adminName || adminName || schoolProfile.principalName) && (
-                <div className="flex items-center gap-1.5 text-xs text-amber-300 font-semibold mt-0.5">
-                  <UserCheck className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Principal: <strong className="text-white font-bold">{admin.adminName || adminName || schoolProfile.principalName}</strong></span>
-                </div>
-              )}
+              {(() => {
+                const des = admin?.designation || schoolProfile.principalName || 'Principal';
+                return (
+                  <div className="flex items-center gap-1.5 text-xs text-amber-300 font-semibold mt-0.5">
+                    <UserCheck className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{des}: <strong className="text-white font-bold">{des}</strong></span>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 

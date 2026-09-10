@@ -86,7 +86,7 @@ export const TIMETABLE_DAYS: TimetableDay[] = [
 
 export const DEFAULT_SCHOOL_ADMIN: SchoolAdminAccount = {
   id: '',
-  schoolName: "St. Sebastian's Higher Secondary School",
+  schoolName: "St.Sebastian's Higher Secondary School",
   schoolCode: 'SSHSS@111213',
   adminPassword: '',
   adminName: 'Principal',
@@ -102,7 +102,7 @@ export const DEFAULT_TEACHER_ACCOUNTS: TeacherAccount[] = [];
 export const DEFAULT_PRINCIPAL_BROADCASTS: PrincipalBroadcast[] = [];
 
 export const DEFAULT_SCHOOL_PROFILE: SchoolProfile = {
-  schoolName: "St. Sebastian's Higher Secondary School",
+  schoolName: "St.Sebastian's Higher Secondary School",
   schoolAddress: '',
   schoolCode: 'SSHSS@111213',
   schoolPhone: '',
@@ -182,17 +182,18 @@ export const StorageService = {
         const parsed = JSON.parse(val);
         const storedName = parsed.schoolName;
         const isObsoleteName = !storedName ||
-          storedName === "St.Sebastian's Higher Secondary School" ||
-          storedName === "St. Sebastain's Higher Secondary School" ||
+          storedName.toLowerCase().includes('sebast') ||
           storedName === 'Govt. Model HSS' ||
           storedName === 'Govt Higher Secondary School' ||
           storedName === 'School Name' ||
           storedName === 'HIGHER SECONDARY SCHOOL';
         const normalizedName = isObsoleteName
-          ? "St. Sebastian's Higher Secondary School"
+          ? "St.Sebastian's Higher Secondary School"
           : storedName;
         const storedPrincipal = parsed.principalName;
-        const normalizedPrincipal = (storedPrincipal && storedPrincipal.trim()) ? storedPrincipal : 'Principal';
+        const normalizedPrincipal = (!storedPrincipal || storedPrincipal.trim() === 'School Administrator' || storedPrincipal.trim() === 'Principal / School Administrator')
+          ? 'Principal'
+          : (storedPrincipal.trim() || 'Principal');
         const storedCode = parsed.schoolCode;
         const normalizedCode = (storedCode && storedCode.trim() && storedCode !== 'HSS-07142' && storedCode !== 'HSS-KL' && storedCode !== 'School Code')
           ? storedCode.trim().toUpperCase()
@@ -879,7 +880,18 @@ export const StorageService = {
       if (val) {
         const parsed = JSON.parse(val);
         if (Array.isArray(parsed)) {
-          return parsed;
+          return parsed.map(a => ({
+            ...a,
+            schoolName: (a.schoolName?.toLowerCase().includes('sebast') || !a.schoolName)
+              ? "St.Sebastian's Higher Secondary School"
+              : a.schoolName,
+            schoolCode: (a.schoolCode?.toUpperCase() === 'SSHSS@111213' || !a.schoolCode)
+              ? 'SSHSS@111213'
+              : a.schoolCode,
+            adminName: (!a.adminName || a.adminName === 'School Administrator' || a.adminName === 'Principal / School Administrator')
+              ? 'Principal'
+              : a.adminName
+          }));
         }
       }
       return [];
@@ -1471,11 +1483,23 @@ export const StorageService = {
         return { isLoggedIn: false, role: 'teacher', currentTeacher: null, currentAdmin: null };
       }
       const parsed = JSON.parse(val);
+      const currentAdmin = parsed.currentAdmin ? {
+        ...parsed.currentAdmin,
+        schoolName: (parsed.currentAdmin.schoolName?.toLowerCase().includes('sebast') || !parsed.currentAdmin.schoolName)
+          ? "St.Sebastian's Higher Secondary School"
+          : parsed.currentAdmin.schoolName,
+        schoolCode: (parsed.currentAdmin.schoolCode?.toUpperCase() === 'SSHSS@111213' || !parsed.currentAdmin.schoolCode)
+          ? 'SSHSS@111213'
+          : parsed.currentAdmin.schoolCode,
+        adminName: (!parsed.currentAdmin.adminName || parsed.currentAdmin.adminName === 'School Administrator' || parsed.currentAdmin.adminName === 'Principal / School Administrator')
+          ? 'Principal'
+          : parsed.currentAdmin.adminName
+      } : null;
       return {
         isLoggedIn: Boolean(parsed.isLoggedIn),
         role: parsed.role || 'teacher',
         currentTeacher: parsed.currentTeacher || null,
-        currentAdmin: parsed.currentAdmin || null
+        currentAdmin
       };
     } catch {
       return { isLoggedIn: false, role: 'teacher', currentTeacher: null, currentAdmin: null };

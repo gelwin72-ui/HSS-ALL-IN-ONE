@@ -90,6 +90,7 @@ export interface SchoolProfile {
   schoolEmail: string;
   principalName: string;
   principalPhone: string;
+  designation?: string;
 }
 
 export interface ClassInfo {
