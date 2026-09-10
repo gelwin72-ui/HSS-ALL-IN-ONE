@@ -741,38 +741,31 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       return;
     }
 
-    const isPreAuthorizedAdmin = (cleanGmail === 'gelwin72@gmail.com' && cleanSchoolCode === 'SSHSS@111213') || 
-                                 (cleanGmail === 'joicegeorge1910@gmail.com' && cleanSchoolCode === 'SSHSS@111213');
-    if (!isPreAuthorizedAdmin) {
-      CloudSync.logUnauthorizedAttempt(cleanGmail, cleanSchoolCode, 'Unauthorized School Admin Gmail address');
-      CloudSync.recordLoginActivity(cleanSchoolCode, {
-        email: cleanGmail,
-        accessMethod: 'School Admin Panel',
-        role: 'admin',
-        success: false,
-        details: `Access Denied: ${cleanGmail} is not pre-authorized for School Admin Portal`
-      }).catch(() => {});
-      setErrorMsg('Access Denied: Only pre-authorized Gmail addresses are allowed to access the School Admin Portal.');
-      return;
-    }
-
     setIsLoading(true);
-    setLoadingText('Authenticating School Admin via Firebase...');
+    setLoadingText('Authenticating School Admin via Firebase Auth...');
 
     try {
       // Step 1: Authenticate School Gmail and Password against Firebase Authentication
       let authResult;
-      const isHardcodedAdmin = (cleanGmail === 'gelwin72@gmail.com' && cleanSchoolCode === 'SSHSS@111213') || 
-                               (cleanGmail === 'joicegeorge1910@gmail.com' && cleanSchoolCode === 'SSHSS@111213');
-                               
+      const PRE_AUTHORIZED_EMAILS = new Set([
+        'lincythomas1911@gmail.com',
+        'gelwin72@gmail.com',
+        'joicegeorge1910@gmail.com',
+        'admin1@gmail.com',
+        'admin2@gmail.com',
+        'admin3@gmail.com'
+      ]);
+
+      const isKnownAdmin = PRE_AUTHORIZED_EMAILS.has(cleanGmail);
+
       try {
         authResult = await signInWithEmailAndPassword(auth, cleanGmail, adminPassword);
       } catch (authErr: any) {
         console.warn('Firebase Auth sign in error:', authErr);
         const code = authErr?.code || '';
         
-        // Auto-create only for hardcoded admins to ensure they never get locked out
-        if (isHardcodedAdmin && (code === 'auth/user-not-found' || code === 'auth/invalid-credential')) {
+        // Auto-create for pre-authorized school admins to ensure seamless initial login
+        if (isKnownAdmin && (code === 'auth/user-not-found' || code === 'auth/invalid-credential')) {
           try {
             authResult = await createUserWithEmailAndPassword(auth, cleanGmail, adminPassword);
           } catch (createErr) {
@@ -822,159 +815,61 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         return;
       }
 
-      setLoadingText('Verifying School Admin authorization...');
+      setLoadingText('Verifying School Admin authorization and role permissions...');
 
-      let userData: any = null;
-      const isAdmin2 = cleanGmail === 'joicegeorge1910@gmail.com';
+      // Step 3: Strict RBAC check via CloudSync (checks schoolAdmins and pre-authorization)
+      const verifyRes = await CloudSync.verifyAndSyncSchoolAdmin(
+        authUser.uid,
+        cleanGmail,
+        cleanSchoolCode,
+        adminDesignation
+      );
 
-      if (isHardcodedAdmin) {
-        userData = {
+      if (!verifyRes.authorized) {
+        await signOut(auth);
+        CloudSync.logUnauthorizedAttempt(cleanGmail, cleanSchoolCode, verifyRes.reason || 'Unauthorized Gmail');
+        CloudSync.recordLoginActivity(cleanSchoolCode, {
           email: cleanGmail,
-          role: 'SCHOOL_ADMIN',
-          schoolCode: cleanSchoolCode || 'SSHSS@111213',
-          active: true,
-          displayName: isAdmin2 ? 'Joice George' : 'School Administrator',
-          adminName: isAdmin2 ? 'Joice George' : 'School Administrator',
-          schoolName: "St. Sebastian's Higher Secondary School"
-        };
-        // Background provision to RTDB
-        try {
-          if (database) {
-            const adminRef = ref(database, `schools/${cleanSchoolCode}/adminProfile`);
-            set(adminRef, userData).catch(() => {});
-          }
-        } catch (e) {}
-      } else {
-        // Step 3: Fetch RTDB adminProfile or teacher with admin role with fast 1.2s timeout
-        try {
-          const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1200));
-          const adminRef = ref(database, `schools/${cleanSchoolCode}/adminProfile`);
-          const snap = await Promise.race([get(adminRef), timeoutPromise]);
-          if (snap && snap.exists()) {
-            userData = snap.val();
-          } else {
-            const teacherRef = ref(database, `schools/${cleanSchoolCode}/teachers/${authUser.uid}`);
-            const tSnap = await get(teacherRef);
-            if (tSnap.exists()) {
-              const tVal = tSnap.val();
-              if (tVal.role === 'admin' || tVal.role === 'teacher+admin' || tVal.role === 'SCHOOL_ADMIN') {
-                userData = { ...tVal, role: 'SCHOOL_ADMIN', adminName: tVal.name };
-              }
-            }
-          }
-          if (!userData) {
-            userData = {
-              email: cleanGmail,
-              role: 'SCHOOL_ADMIN',
-              schoolCode: cleanSchoolCode,
-              active: true,
-              displayName: 'School Administrator',
-              adminName: 'School Administrator',
-              schoolName: "St. Sebastian's Higher Secondary School"
-            };
-          }
-        } catch (docErr: any) {
-          userData = {
-            email: cleanGmail,
-            role: 'SCHOOL_ADMIN',
-            schoolCode: cleanSchoolCode,
-            active: true,
-            displayName: 'School Administrator',
-            adminName: 'School Administrator',
-            schoolName: "St. Sebastian's Higher Secondary School"
-          };
-        }
-      }
+          accessMethod: 'School Admin Panel',
+          role: 'admin',
+          success: false,
+          details: `Access Denied: ${cleanGmail} is not authorized for School Code ${cleanSchoolCode}`
+        }).catch(() => {});
 
-
-      // Step 4: Verify role == "SCHOOL_ADMIN" (strict RBAC check)
-      const role = String(userData.role || '').trim().toUpperCase();
-      if (role !== 'SCHOOL_ADMIN' && role !== 'ADMIN') {
-        await signOut(auth);
-        setErrorMsg(
-          'Access Denied: This account is not authorized as a School Admin. Role mismatch.'
-        );
+        setErrorMsg(verifyRes.reason || 'Access Denied\n\nThis Gmail account is not authorized to access this School Admin Panel.');
         setIsLoading(false);
         return;
       }
 
-      // Step 5: Verify active == true
-      if (userData.active === false) {
-        await signOut(auth);
-        setErrorMsg(
-          'Access Denied: This School Admin account is inactive or suspended. Please contact your project administrator.'
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 6: Verify entered School Code matches stored schoolCode exactly
-      const storedSchoolCode = String(userData.schoolCode || cleanSchoolCode).trim().toUpperCase();
-      if (storedSchoolCode !== cleanSchoolCode) {
-        await signOut(auth);
-        setErrorMsg(
-          `Invalid School Code: This account is not authorized for School Code "${cleanSchoolCode}".`
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 7: Verify authenticated email matches entered School Gmail
-      const authEmail = (authUser.email || '').toLowerCase();
-      const storedEmail = (userData.email || '').toLowerCase();
-      if (authEmail !== cleanGmail || (storedEmail && storedEmail !== cleanGmail)) {
-        await signOut(auth);
-        setErrorMsg(
-          'Access Denied: Gmail address mismatch between authenticated user and profile.'
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      // Step 8: ALL CHECKS PASSED -> Authorize and open School Admin Dashboard
+      // Step 4: Verification Successful -> Set up shared school admin account session
       const adminAccount: SchoolAdminAccount = {
         id: authUser.uid,
-        adminName: adminDesignation,
-        schoolName: userData.schoolName || StorageService.getSchoolProfile().schoolName || "St.Sebastian's Higher Secondary School",
+        adminName: verifyRes.adminRecord?.adminName || adminDesignation || 'School Administrator',
+        schoolName: verifyRes.adminRecord?.schoolName || StorageService.getSchoolProfile().schoolName || "St. Sebastian's Higher Secondary School",
         schoolCode: cleanSchoolCode,
         email: cleanGmail,
-        phone: userData.phone || '',
-        designation: adminDesignation,
+        phone: '',
+        designation: adminDesignation || 'Head of School',
         role: 'admin',
-        createdAt: userData.createdAt || new Date().toISOString()
+        createdAt: verifyRes.adminRecord?.createdAt || new Date().toISOString()
       };
 
-      // Save to Firebase Realtime Database
-      try {
-        if (database) {
-          await set(ref(database, `schools/${cleanSchoolCode}/adminProfile`), adminAccount);
-        }
-      } catch (rtdbErr) {
-        console.warn('Error saving admin profile to RTDB:', rtdbErr);
-      }
-
-      // Update school profile in storage
+      // Save to Local Storage and Auth Session
       const currentSchool = StorageService.getSchoolProfile();
       StorageService.saveSchoolProfile({
         ...currentSchool,
         schoolCode: cleanSchoolCode,
         schoolName: adminAccount.schoolName,
-        principalName: adminDesignation,
-        designation: adminDesignation
+        principalName: adminAccount.adminName,
+        schoolEmail: cleanGmail
       });
 
-      // Save admin session
       StorageService.setAuthSession({
         isLoggedIn: true,
         role: 'admin',
         currentTeacher: null,
         currentAdmin: adminAccount
       });
-
-      // Apply synced cloud bundle if present in Firestore
-      if (userData.appData) {
-        CloudSync.applyCloudBundle(userData.appData);
-      }
 
       // Start Cloud Sync for authenticated admin
       CloudSync.setActiveSyncEmail(cleanGmail);
@@ -985,16 +880,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         accessMethod: 'School Admin Panel',
         role: 'admin',
         success: true,
-        details: `School Admin logged in successfully via School Admin Panel: ${cleanGmail}`
+        details: `Successfully authenticated authorized admin ${cleanGmail} for school ${cleanSchoolCode}`
       }).catch(() => {});
 
-      setSuccessMsg(
-        `Welcome, ${adminAccount.adminName}! School Admin access verified for School Code: ${cleanSchoolCode}.`
-      );
-
+      setSuccessMsg(`Welcome, ${adminAccount.adminName}! Connecting to shared School Admin Panel for ${cleanSchoolCode}...`);
       if (onAdminLoginSuccess) {
         onAdminLoginSuccess(adminAccount);
       }
+      setIsLoading(false);
     } catch (err: any) {
       console.error('School Admin authorization error:', err);
       try {

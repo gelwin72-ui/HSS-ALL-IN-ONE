@@ -1266,6 +1266,176 @@ class CloudSyncManager {
     }
   }
 
+  public async verifyAndSyncSchoolAdmin(
+    uid: string,
+    email: string,
+    schoolCode: string,
+    designation?: string
+  ): Promise<{
+    authorized: boolean;
+    reason?: string;
+    adminRecord?: {
+      id: string;
+      email: string;
+      schoolCode: string;
+      role: string;
+      status: string;
+      adminName: string;
+      schoolName: string;
+      designation?: string;
+      createdAt: string;
+    };
+  }> {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanSchoolCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
+    const nowIso = new Date().toISOString();
+
+    if (!cleanEmail || !cleanSchoolCode) {
+      return {
+        authorized: false,
+        reason: 'Access Denied\n\nThis Gmail account is not authorized to access this School Admin Panel.'
+      };
+    }
+
+    // Pre-authorized Gmail accounts for SSHSS@111213
+    const PRE_AUTHORIZED_EMAILS = new Set([
+      'lincythomas1911@gmail.com',
+      'gelwin72@gmail.com',
+      'joicegeorge1910@gmail.com',
+      'admin1@gmail.com',
+      'admin2@gmail.com',
+      'admin3@gmail.com'
+    ]);
+
+    let matchedRecord: any = null;
+
+    // 1. Check RTDB schoolAdmins/{uid}
+    if (database && uid) {
+      try {
+        const rootAdminRef = ref(database, `schoolAdmins/${uid}`);
+        const snap = await get(rootAdminRef);
+        if (snap.exists()) {
+          matchedRecord = snap.val();
+        }
+      } catch (e) {}
+
+      if (!matchedRecord) {
+        try {
+          const schoolAdminRef = ref(database, `schools/${cleanSchoolCode}/schoolAdmins/${uid}`);
+          const snap = await get(schoolAdminRef);
+          if (snap.exists()) {
+            matchedRecord = snap.val();
+          }
+        } catch (e) {}
+      }
+
+      if (!matchedRecord) {
+        try {
+          const allAdminsRef = ref(database, 'schoolAdmins');
+          const snap = await get(allAdminsRef);
+          if (snap.exists()) {
+            snap.forEach(child => {
+              const val = child.val();
+              if (val && (val.email || '').toLowerCase() === cleanEmail) {
+                matchedRecord = val;
+              }
+            });
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 2. Check Firestore if RTDB check produced no record
+    if (!matchedRecord && firestore && uid) {
+      try {
+        const docRef = fsDoc(firestore, `schoolAdmins/${uid}`);
+        const docSnap = await fsGetDoc(docRef);
+        if (docSnap.exists()) {
+          matchedRecord = docSnap.data();
+        }
+      } catch (e) {}
+    }
+
+    const isPreAuthorized = PRE_AUTHORIZED_EMAILS.has(cleanEmail);
+
+    if (!matchedRecord && !isPreAuthorized) {
+      return {
+        authorized: false,
+        reason: 'Access Denied\n\nThis Gmail account is not authorized to access this School Admin Panel.'
+      };
+    }
+
+    // Verify properties if record was found
+    const targetCode = String(matchedRecord?.schoolCode || cleanSchoolCode).trim().toUpperCase();
+    const targetRole = String(matchedRecord?.role || 'schoolAdmin').trim();
+    const targetStatus = String(matchedRecord?.status || 'active').trim().toLowerCase();
+
+    const isSchoolCodeMatch = targetCode === cleanSchoolCode;
+    const isRoleValid = targetRole.toLowerCase() === 'schooladmin' || targetRole.toLowerCase() === 'admin' || targetRole.toUpperCase() === 'SCHOOL_ADMIN';
+    const isActive = targetStatus === 'active' || targetStatus === 'true';
+
+    if (!isSchoolCodeMatch || !isRoleValid || !isActive) {
+      return {
+        authorized: false,
+        reason: 'Access Denied\n\nThis Gmail account is not authorized to access this School Admin Panel.'
+      };
+    }
+
+    // Create / Sync authorized admin profile across RTDB & Firestore
+    const adminData = {
+      id: uid,
+      uid: uid,
+      email: cleanEmail,
+      schoolCode: cleanSchoolCode,
+      role: 'schoolAdmin',
+      status: 'active',
+      adminName: designation || matchedRecord?.adminName || 'School Administrator',
+      schoolName: matchedRecord?.schoolName || "St. Sebastian's Higher Secondary School",
+      designation: designation || matchedRecord?.designation || 'Head of School',
+      createdAt: matchedRecord?.createdAt || nowIso,
+      updatedAt: nowIso
+    };
+
+    if (database && uid) {
+      try {
+        const updates: Record<string, any> = {};
+        updates[`schoolAdmins/${uid}`] = adminData;
+        updates[`schools/${cleanSchoolCode}/schoolAdmins/${uid}`] = adminData;
+        updates[`schools/${cleanSchoolCode}/adminProfile`] = adminData;
+        await update(ref(database), updates);
+      } catch (e) {
+        console.warn('Error syncing schoolAdmin to RTDB:', e);
+      }
+    }
+
+    if (firestore && uid) {
+      try {
+        const docRef = fsDoc(firestore, `schoolAdmins/${uid}`);
+        await fsSetDoc(docRef, adminData, { merge: true });
+
+        const schoolAdminRef = fsDoc(firestore, `schools/${cleanSchoolCode}/schoolAdmins/${uid}`);
+        await fsSetDoc(schoolAdminRef, adminData, { merge: true });
+      } catch (e) {
+        console.warn('Error syncing schoolAdmin to Firestore:', e);
+      }
+    }
+
+    return {
+      authorized: true,
+      adminRecord: {
+        id: uid,
+        email: cleanEmail,
+        schoolCode: cleanSchoolCode,
+        role: 'schoolAdmin',
+        status: 'active',
+        adminName: adminData.adminName,
+        schoolName: adminData.schoolName,
+        designation: adminData.designation,
+        createdAt: adminData.createdAt
+      }
+    };
+  }
+
   public async recordLoginActivity(
     schoolCode: string,
     payload: {
