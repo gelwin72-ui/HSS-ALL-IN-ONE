@@ -55,6 +55,7 @@ import {
   database,
   ref,
   set,
+  update,
   get
 } from '../utils/firebase';
 import { CloudSync } from '../utils/cloudSync';
@@ -280,50 +281,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         }
       }
 
-      // Check if an account with this email already exists in RTDB teachers/ or cloud
-      if (cleanEmail) {
-        const timeoutPromise = new Promise<any>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1200));
-        let cloudCheck = { found: false, teacherAccount: null as any, appData: null as any };
-        try {
-          cloudCheck = await Promise.race([CloudSync.fetchAccountByEmail(cleanEmail, cleanSchoolCode), timeoutPromise]);
-        } catch (e) {}
-        
-        if (cloudCheck.found && cloudCheck.teacherAccount) {
-          const cloudTeacher = cloudCheck.teacherAccount;
-          // Restore cloud data on this device
-          if (cloudCheck.appData) {
-            CloudSync.applyCloudBundle(cloudCheck.appData);
-          }
-          StorageService.registerTeacherAccount(cloudTeacher);
-          StorageService.setAuthSession({
-            isLoggedIn: true,
-            role: 'teacher',
-            currentTeacher: cloudTeacher,
-            currentAdmin: null
-          });
-
-          CloudSync.setActiveSyncEmail(cleanEmail);
-          CloudSync.startRealtimeEmailSync(cleanEmail);
-
-          // Sync to School Admin Panel
-          await CloudSync.saveTeacherToSchool(cleanSchoolCode, cloudTeacher);
-          await CloudSync.recordTeacherActivity(cleanSchoolCode, {
-            teacherId: cloudTeacher.id,
-            teacherName: cloudTeacher.name,
-            subject: cloudTeacher.subject || effectiveSubject,
-            assignedClass: cloudTeacher.assignedClass || assignedClassName,
-            activityType: 'login',
-            description: `Teacher ${cloudTeacher.name} logged into School Portal`
-          });
-
-          setSuccessMsg(`Existing account verified on cloud! All school and class data synced to this device.`);
-          setTimeout(() => {
-            onLoginSuccess(cloudTeacher);
-          }, 600);
-          return;
-        }
-      }
-
+      const nowIso = new Date().toISOString();
       const newAccount: TeacherAccount = {
         id: firebaseUid,
         uid: firebaseUid,
@@ -342,15 +300,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         assignedClass: assignedClassName,
         designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
         dob: signupDob,
-        createdAt: new Date().toISOString(),
-        lastActiveAt: new Date().toISOString()
+        createdAt: nowIso,
+        lastActiveAt: nowIso
       };
 
-      // Write teacher profile to Realtime Database
-      try {
-        if (database) {
-          const teacherProfileRef = ref(database, `teachers/${firebaseUid}`);
-          await set(teacherProfileRef, {
+      // Fast atomic multi-location update in Realtime Database (non-blocking)
+      if (database) {
+        try {
+          const rtdbUpdates: Record<string, any> = {};
+          rtdbUpdates[`teachers/${firebaseUid}`] = {
             id: firebaseUid,
             uid: firebaseUid,
             name: signupName.trim(),
@@ -363,27 +321,26 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
             designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
             role: 'teacher',
             active: true,
-            createdAt: new Date().toISOString()
-          });
-          const schoolTeacherRef = ref(database, `schools/${cleanSchoolCode}/teachers/${firebaseUid}`);
-          await set(schoolTeacherRef, {
-            id: firebaseUid,
-            uid: firebaseUid,
-            name: signupName.trim(),
-            email: cleanEmail,
-            gmail: cleanEmail,
-            phone: signupPhone.trim(),
-            schoolName: signupSchool.trim(),
-            schoolCode: cleanSchoolCode,
-            subject: effectiveSubject,
-            designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
-            role: 'teacher',
-            active: true,
-            createdAt: new Date().toISOString()
-          });
+            createdAt: nowIso
+          };
 
-          const teacherSignupsRef = ref(database, `teacherSignups/${firebaseUid}`);
-          await set(teacherSignupsRef, {
+          rtdbUpdates[`schools/${cleanSchoolCode}/teachers/${firebaseUid}`] = {
+            id: firebaseUid,
+            uid: firebaseUid,
+            name: signupName.trim(),
+            email: cleanEmail,
+            gmail: cleanEmail,
+            phone: signupPhone.trim(),
+            schoolName: signupSchool.trim(),
+            schoolCode: cleanSchoolCode,
+            subject: effectiveSubject,
+            designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
+            role: 'teacher',
+            active: true,
+            createdAt: nowIso
+          };
+
+          rtdbUpdates[`teacherSignups/${firebaseUid}`] = {
             fullName: signupName.trim(),
             email: cleanEmail,
             dateOfBirth: signupDob,
@@ -395,12 +352,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
             className: signupIsClassTeacher ? effectiveStandard : '',
             stream: signupIsClassTeacher ? effectiveStream : '',
             section: signupIsClassTeacher ? signupSection : '',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
+            createdAt: nowIso,
+            updatedAt: nowIso
+          };
+
+          update(ref(database), rtdbUpdates).catch(rtdbErr => {
+            console.warn('RTDB user profile write note:', rtdbErr);
           });
+        } catch (rtdbErr) {
+          console.warn('RTDB sync warning:', rtdbErr);
         }
-      } catch (rtdbErr) {
-        console.warn('RTDB user profile write note:', rtdbErr);
       }
 
       const registered = StorageService.registerTeacherAccount(newAccount);
