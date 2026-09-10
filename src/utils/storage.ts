@@ -840,9 +840,6 @@ export const StorageService = {
 
   deleteTeacherAccount(teacherId: string): boolean {
     let accounts = this.getTeacherAccounts();
-    if (accounts.length <= 1) {
-      return false; // Preserve at least one teacher
-    }
     accounts = accounts.filter(a => a.id !== teacherId);
     this.saveTeacherAccounts(accounts);
     notifyMutation();

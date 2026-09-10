@@ -905,7 +905,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   const handleOpenAddAdminSlot = (day?: TimetableDay, periodNum?: number, teacherId?: string, className?: string) => {
     const targetPeriod = periodNum || 1;
     const timing = DEFAULT_PERIOD_TIMINGS[targetPeriod - 1] || DEFAULT_PERIOD_TIMINGS[0];
-    const selTeacher = teachers.find(t => t.id === teacherId) || teachers[0];
+    const selTeacher = teachers.find(t => t.id === teacherId) || (teachers.length > 0 ? teachers[0] : null);
 
     setAdminEditingSlot(null);
     setAdminSlotFormData({
@@ -1734,7 +1734,6 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                           <span>Work Dossier</span>
                         </button>
 
-                        {teachers.length > 1 && (
                           <button
                             type="button"
                             onClick={() => handleDeleteTeacher(teacher.id, teacher.name)}
@@ -1743,7 +1742,6 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -1897,7 +1895,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
             {/* Teacher & Classroom Summary Card (When in Teacher-wise Classroom mode) */}
             {studentViewMode === 'teacher-wise' && (() => {
-              const activeTeacher = teachers.find(t => t.id === selectedTeacherIdForClassroom) || teachers[0];
+              const activeTeacher = teachers.find(t => t.id === selectedTeacherIdForClassroom) || (teachers.length > 0 ? teachers[0] : null);
               const classroomStudents = displayedStudents;
               const boysCount = classroomStudents.filter(s => s.gender === 'male').length;
               const girlsCount = classroomStudents.filter(s => s.gender === 'female').length;
@@ -2102,7 +2100,6 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                           <span>Inspect Dossier</span>
                         </button>
 
-                        {teachers.length > 1 && (
                           <button
                             type="button"
                             onClick={() => handleDeleteTeacher(teacher.id, teacher.name)}
@@ -2111,7 +2108,6 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
-                        )}
                       </div>
                     </div>
 
