@@ -1,4 +1,6 @@
-import express from "express";
+const fs = require('fs');
+
+const serverContent = `import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initializeApp, getApps } from "firebase-admin/app";
@@ -58,7 +60,7 @@ async function startServer() {
       }
   
       const { db, messaging } = adminInstance;
-      const tokensRef = db.ref(`fcm_tokens/${cleanSchoolCode}`);
+      const tokensRef = db.ref(\`fcm_tokens/\${cleanSchoolCode}\`);
       const snapshot = await tokensRef.once('value');
       
       const tokens: string[] = [];
@@ -81,7 +83,7 @@ async function startServer() {
         const message = {
           tokens,
           notification: {
-            title: `📢 ${title}`,
+            title: \`📢 \${title}\`,
             body: body.length > 120 ? body.substring(0, 117) + '...' : body
           },
           webpush: {
@@ -127,8 +129,11 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(\`Server running on http://0.0.0.0:\${PORT}\`);
   });
 }
 
 startServer();
+`;
+
+fs.writeFileSync('server.ts', serverContent);
