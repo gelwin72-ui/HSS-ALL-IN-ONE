@@ -1462,12 +1462,32 @@ class CloudSyncManager {
     const cleanGmail = gmail.trim().toLowerCase();
     const cleanSchoolCode = schoolCode ? schoolCode.trim().toUpperCase() : '';
 
+    // Fast local accounts check first (0ms)
+    try {
+      const localTeachers = StorageService.getTeacherAccounts();
+      const localMatch = localTeachers.find(t => 
+        (t.email && t.email.toLowerCase() === cleanGmail) || 
+        (t.gmail && t.gmail.toLowerCase() === cleanGmail)
+      );
+      if (localMatch) {
+        if (localMatch.status && localMatch.status !== 'active') {
+          return { found: true, valid: false, reason: 'status_inactive', teacher: localMatch };
+        }
+        if (cleanSchoolCode && localMatch.schoolCode && localMatch.schoolCode.toUpperCase() !== cleanSchoolCode) {
+          return { found: true, valid: false, reason: 'school_mismatch', teacher: localMatch };
+        }
+        return { found: true, valid: true, teacher: localMatch };
+      }
+    } catch (e) {}
+
     if (database) {
       try {
-        // 1. Check in dedicated teachers/ RTDB collection
+        const timeoutPromise = new Promise<null>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500));
+
+        // 1. Check in dedicated teachers/ RTDB collection with timeout
         const teachersRef = ref(database, 'teachers');
-        const snap = await get(teachersRef);
-        if (snap.exists()) {
+        const snap = await Promise.race([get(teachersRef), timeoutPromise]).catch(() => null);
+        if (snap && snap.exists()) {
           let matchedTeacher: TeacherAccount | null = null;
           snap.forEach(child => {
             const val = child.val() as TeacherAccount;
@@ -1479,11 +1499,9 @@ class CloudSyncManager {
 
           if (matchedTeacher) {
             const t = matchedTeacher as TeacherAccount;
-            // Check status (default is active)
             if (t.status && t.status !== 'active') {
               return { found: true, valid: false, reason: 'status_inactive', teacher: t };
             }
-            // Check school code if provided
             if (cleanSchoolCode && t.schoolCode && t.schoolCode.toUpperCase() !== cleanSchoolCode) {
               return { found: true, valid: false, reason: 'school_mismatch', teacher: t };
             }
@@ -1491,11 +1509,11 @@ class CloudSyncManager {
           }
         }
 
-        // 2. Check in schools/{cleanSchoolCode}/teachers RTDB collection if school code is provided
+        // 2. Check in schools/{cleanSchoolCode}/teachers RTDB collection with timeout
         if (cleanSchoolCode) {
           const schoolTeachersRef = ref(database, `schools/${cleanSchoolCode}/teachers`);
-          const schoolSnap = await get(schoolTeachersRef);
-          if (schoolSnap.exists()) {
+          const schoolSnap = await Promise.race([get(schoolTeachersRef), timeoutPromise]).catch(() => null);
+          if (schoolSnap && schoolSnap.exists()) {
             let matchedTeacher: TeacherAccount | null = null;
             schoolSnap.forEach(child => {
               const val = child.val() as TeacherAccount;
@@ -1578,14 +1596,78 @@ class CloudSyncManager {
       'admin3@gmail.com'
     ]);
 
+    const isPreAuthorized = PRE_AUTHORIZED_EMAILS.has(cleanEmail);
+
+    // Fast path: Immediately grant access for pre-authorized admins under SSHSS@111213
+    if (isPreAuthorized && cleanSchoolCode === 'SSHSS@111213') {
+      const adminNameDetermined = designation || (
+        cleanEmail.includes('lincy') ? 'Lincy Thomas' :
+        cleanEmail.includes('gelwin') ? 'Gelwin' :
+        cleanEmail.includes('joice') ? 'Joice George' : 'School Administrator'
+      );
+
+      const adminData = {
+        id: uid || `admin-${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}`,
+        uid: uid || `admin-${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}`,
+        email: cleanEmail,
+        schoolCode: cleanSchoolCode,
+        role: 'schoolAdmin',
+        status: 'active',
+        adminName: adminNameDetermined,
+        schoolName: "St. Sebastian's Higher Secondary School",
+        designation: designation || 'Head of School',
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+
+      // Non-blocking background sync to RTDB & Firestore
+      if (database && uid) {
+        try {
+          const updates: Record<string, any> = {};
+          updates[`schoolAdmins/${uid}`] = adminData;
+          updates[`schools/${cleanSchoolCode}/schoolAdmins/${uid}`] = adminData;
+          updates[`schools/${cleanSchoolCode}/adminProfile`] = adminData;
+          update(ref(database), updates).catch(e => console.warn('RTDB admin sync bg note:', e));
+        } catch (e) {}
+      }
+
+      if (firestore && uid) {
+        try {
+          const docRef = fsDoc(firestore, `schoolAdmins/${uid}`);
+          fsSetDoc(docRef, adminData, { merge: true }).catch(e => console.warn('Firestore admin sync bg note:', e));
+          const schoolAdminRef = fsDoc(firestore, `schools/${cleanSchoolCode}/schoolAdmins/${uid}`);
+          fsSetDoc(schoolAdminRef, adminData, { merge: true }).catch(e => console.warn('Firestore school admin sync bg note:', e));
+        } catch (e) {}
+      }
+
+      return {
+        authorized: true,
+        adminRecord: {
+          id: adminData.id,
+          email: cleanEmail,
+          schoolCode: cleanSchoolCode,
+          role: 'schoolAdmin',
+          status: 'active',
+          adminName: adminData.adminName,
+          schoolName: adminData.schoolName,
+          designation: adminData.designation,
+          createdAt: adminData.createdAt
+        }
+      };
+    }
+
     let matchedRecord: any = null;
 
-    // 1. Check RTDB schoolAdmins/{uid}
+    // For non-pre-authorized emails, query with tight timeout
     if (database && uid) {
       try {
         const rootAdminRef = ref(database, `schoolAdmins/${uid}`);
-        const snap = await get(rootAdminRef);
-        if (snap.exists()) {
+        const snap = await Promise.race([
+          get(rootAdminRef),
+          new Promise<null>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))
+        ]).catch(() => null);
+
+        if (snap && snap.exists()) {
           matchedRecord = snap.val();
         }
       } catch (e) {}
@@ -1593,41 +1675,31 @@ class CloudSyncManager {
       if (!matchedRecord) {
         try {
           const schoolAdminRef = ref(database, `schools/${cleanSchoolCode}/schoolAdmins/${uid}`);
-          const snap = await get(schoolAdminRef);
-          if (snap.exists()) {
+          const snap = await Promise.race([
+            get(schoolAdminRef),
+            new Promise<null>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))
+          ]).catch(() => null);
+
+          if (snap && snap.exists()) {
             matchedRecord = snap.val();
           }
         } catch (e) {}
       }
-
-      if (!matchedRecord) {
-        try {
-          const allAdminsRef = ref(database, 'schoolAdmins');
-          const snap = await get(allAdminsRef);
-          if (snap.exists()) {
-            snap.forEach(child => {
-              const val = child.val();
-              if (val && (val.email || '').toLowerCase() === cleanEmail) {
-                matchedRecord = val;
-              }
-            });
-          }
-        } catch (e) {}
-      }
     }
 
-    // 2. Check Firestore if RTDB check produced no record
     if (!matchedRecord && firestore && uid) {
       try {
         const docRef = fsDoc(firestore, `schoolAdmins/${uid}`);
-        const docSnap = await fsGetDoc(docRef);
-        if (docSnap.exists()) {
+        const docSnap = await Promise.race([
+          fsGetDoc(docRef),
+          new Promise<null>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))
+        ]).catch(() => null);
+
+        if (docSnap && docSnap.exists()) {
           matchedRecord = docSnap.data();
         }
       } catch (e) {}
     }
-
-    const isPreAuthorized = PRE_AUTHORIZED_EMAILS.has(cleanEmail);
 
     if (!matchedRecord && !isPreAuthorized) {
       return {
@@ -1652,7 +1724,7 @@ class CloudSyncManager {
       };
     }
 
-    // Create / Sync authorized admin profile across RTDB & Firestore
+    // Create / Sync authorized admin profile across RTDB & Firestore (non-blocking)
     const adminData = {
       id: uid,
       uid: uid,
@@ -1673,7 +1745,7 @@ class CloudSyncManager {
         updates[`schoolAdmins/${uid}`] = adminData;
         updates[`schools/${cleanSchoolCode}/schoolAdmins/${uid}`] = adminData;
         updates[`schools/${cleanSchoolCode}/adminProfile`] = adminData;
-        await update(ref(database), updates);
+        update(ref(database), updates).catch(e => console.warn('Error syncing schoolAdmin to RTDB:', e));
       } catch (e) {
         console.warn('Error syncing schoolAdmin to RTDB:', e);
       }
@@ -1682,10 +1754,10 @@ class CloudSyncManager {
     if (firestore && uid) {
       try {
         const docRef = fsDoc(firestore, `schoolAdmins/${uid}`);
-        await fsSetDoc(docRef, adminData, { merge: true });
+        fsSetDoc(docRef, adminData, { merge: true }).catch(() => {});
 
         const schoolAdminRef = fsDoc(firestore, `schools/${cleanSchoolCode}/schoolAdmins/${uid}`);
-        await fsSetDoc(schoolAdminRef, adminData, { merge: true });
+        fsSetDoc(schoolAdminRef, adminData, { merge: true }).catch(() => {});
       } catch (e) {
         console.warn('Error syncing schoolAdmin to Firestore:', e);
       }
