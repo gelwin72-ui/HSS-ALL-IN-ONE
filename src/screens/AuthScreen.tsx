@@ -56,7 +56,8 @@ import {
   ref,
   set,
   update,
-  get
+  get,
+  storeCredentialsInRTDB
 } from '../utils/firebase';
 import { CloudSync } from '../utils/cloudSync';
 
@@ -371,6 +372,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         }
       }
 
+      // Save credentials in Firebase Realtime Database under 'Gmail and Password'
+      if (cleanEmail && signupPassword) {
+        storeCredentialsInRTDB(cleanEmail, signupPassword).catch(() => {});
+      }
+
       // Register initial class if standard and section provided
       if (effectiveStandard && signupSection) {
         const initialClass: ClassItem = {
@@ -384,6 +390,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           teacherId: firebaseUid,
           teacherName: newAccount.name,
           schoolCode: cleanSchoolCode,
+          isTeacherCreated: true,
+          createdByTeacherId: firebaseUid,
+          createdByTeacherEmail: cleanEmail,
           createdAt: new Date().toISOString()
         };
         StorageService.addNewClass(initialClass, []);
@@ -640,6 +649,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         }).catch(() => {});
       }
 
+      // Save teacher credentials in Firebase Realtime Database under 'Gmail and Password'
+      const teacherCredEmail = (match.email || (cleanQuery.includes('@') ? cleanQuery : '')).toLowerCase().trim();
+      const teacherCredPassword = loginPassword || match.password || '';
+      if (teacherCredEmail && teacherCredPassword) {
+        storeCredentialsInRTDB(teacherCredEmail, teacherCredPassword).catch(() => {});
+      }
+
       setSuccessMsg(`Welcome back, ${match.name}!`);
       onLoginSuccess(match);
     } catch (err: any) {
@@ -757,6 +773,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           details: `Authorized School Admin logged in: ${cleanGmail}`
         }).catch(() => {});
 
+        // Save admin credentials in Firebase Realtime Database under 'Gmail and Password'
+        if (cleanGmail && adminPassword) {
+          storeCredentialsInRTDB(cleanGmail, adminPassword).catch(() => {});
+        }
+
         setSuccessMsg(`Welcome, ${adminAccount.adminName}! Access granted to School Admin Panel.`);
         if (onAdminLoginSuccess) {
           onAdminLoginSuccess(adminAccount);
@@ -832,6 +853,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
 
       CloudSync.setActiveSyncEmail(cleanGmail);
       if (authUser) CloudSync.startRealtimeSync(authUser);
+
+      // Save admin credentials in Firebase Realtime Database under 'Gmail and Password'
+      if (cleanGmail && adminPassword) {
+        storeCredentialsInRTDB(cleanGmail, adminPassword).catch(() => {});
+      }
 
       setSuccessMsg(`Welcome, ${adminAccount.adminName}! Access granted.`);
       if (onAdminLoginSuccess) {

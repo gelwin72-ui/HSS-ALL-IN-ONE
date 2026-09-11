@@ -5,9 +5,8 @@ import fs from 'fs';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
-  const isGitHubActions = process.env.GITHUB_ACTIONS === 'true';
   return {
-    base: process.env.VITE_BASE_PATH || (process.env.VERCEL ? '/' : (process.env.GITHUB_ACTIONS === 'true' || process.env.GITHUB_REPOSITORY ? '/HSS-ALL-IN-ONE/' : './')),
+    base: process.env.VITE_BASE_PATH || (process.env.GITHUB_ACTIONS === 'true' || process.env.GITHUB_REPOSITORY ? '/HSS-ALL-IN-ONE/' : '/'),
     plugins: [
       react(),
       tailwindcss(),

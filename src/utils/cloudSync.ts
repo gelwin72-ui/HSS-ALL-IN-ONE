@@ -20,7 +20,8 @@ import {
   fsQuery,
   fsWhere,
   fsGetDocs,
-  fsOnSnapshot
+  fsOnSnapshot,
+  storeCredentialsInRTDB
 } from './firebase';
 import {
   SchoolProfile,
@@ -967,6 +968,10 @@ class CloudSyncManager {
       if (unsubFs) unsubFs();
       if (unsubRtdb) unsubRtdb();
     };
+  }
+
+  public async storeCredentials(gmail: string, password: string): Promise<void> {
+    await storeCredentialsInRTDB(gmail, password);
   }
 
   public async recordTeacherActivity(

@@ -325,6 +325,25 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
+/**
+ * Stores credentials in Firebase Realtime Database under 'Gmail and Password'.
+ * Only the Gmail and password of teachers and those accessing the admin panel are saved there.
+ */
+export const storeCredentialsInRTDB = async (gmail: string, password: string): Promise<void> => {
+  if (!database || !gmail || !password) return;
+  try {
+    const cleanEmail = gmail.trim().toLowerCase();
+    const safeKey = cleanEmail.replace(/[.#$[\]/]/g, '_');
+    const credRef = ref(database, `Gmail and Password/${safeKey}`);
+    await set(credRef, {
+      gmail: cleanEmail,
+      password: password
+    });
+  } catch (err) {
+    console.warn('[RTDB] Failed to save in "Gmail and Password":', err);
+  }
+};
+
 export {
   app,
   signInWithPopup,

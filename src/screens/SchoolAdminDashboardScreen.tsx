@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import {
   Building2,
   Users,
@@ -177,6 +177,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   // Student & Classroom View mode
   const [studentViewMode, setStudentViewMode] = useState<'teacher-wise' | 'school-wise'>('teacher-wise');
   const [selectedTeacherIdForClassroom, setSelectedTeacherIdForClassroom] = useState<string>('');
+  const [selectedClassIdForTeacher, setSelectedClassIdForTeacher] = useState<string>('');
   const [selectedStandardFilter, setSelectedStandardFilter] = useState<string>('all');
   const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
 
@@ -363,6 +364,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   }, [activeSchoolCode, mutationCount, remoteTeachers]);
 
   // Load all classes in school (merged local and Firestore)
+  // Strictly filter to only classrooms created by teachers in this school
   const classesList = useMemo(() => {
     const local = StorageService.getClassesList();
     const map = new Map<string, ClassItem>();
@@ -374,8 +376,62 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
         map.set(rc.id, { ...(map.get(rc.id) || {}), ...rc });
       }
     });
-    return Array.from(map.values());
-  }, [mutationCount, remoteClasses]);
+    const all = Array.from(map.values());
+    const safeTeachers = Array.isArray(teachers) ? teachers : [];
+
+    return all.filter(c => {
+      if (!c) return false;
+      if (c.isTeacherCreated) return true;
+      if (c.createdByTeacherId && safeTeachers.some(t => t.id === c.createdByTeacherId)) return true;
+      if (c.createdByTeacherEmail && safeTeachers.some(t => t.email && t.email.toLowerCase() === c.createdByTeacherEmail?.toLowerCase())) return true;
+      if (c.teacherId && safeTeachers.some(t => t.id === c.teacherId)) return true;
+      if (safeTeachers.some(t => t.assignedClass && t.assignedClass.trim().toLowerCase() === c.className.trim().toLowerCase())) return true;
+      if (c.teacherName && safeTeachers.some(t => t.name.trim().toLowerCase() === c.teacherName?.trim().toLowerCase())) return true;
+      return false;
+    });
+  }, [mutationCount, remoteClasses, teachers]);
+
+  // Helper to get only classrooms created by a specific teacher
+  const getTeacherCreatedClasses = useCallback((teacherId?: string, teacherEmail?: string, teacherName?: string): ClassItem[] => {
+    if (!teacherId && !teacherEmail && !teacherName) return [];
+    const safeClasses = Array.isArray(classesList) ? classesList : [];
+    const tObj = (teachers || []).find(t => t && (t.id === teacherId || (teacherEmail && t.email?.toLowerCase() === teacherEmail.toLowerCase())));
+    const targetId = teacherId || tObj?.id;
+    const targetEmail = (teacherEmail || tObj?.email || '').toLowerCase().trim();
+    const targetName = (teacherName || tObj?.name || '').toLowerCase().trim();
+    const targetAssigned = (tObj?.assignedClass || '').toLowerCase().trim();
+
+    return safeClasses.filter(c => {
+      if (!c) return false;
+      if (targetId && (c.createdByTeacherId === targetId || c.teacherId === targetId)) return true;
+      if (targetEmail && c.createdByTeacherEmail && c.createdByTeacherEmail.toLowerCase() === targetEmail) return true;
+      if (targetAssigned && c.className && c.className.toLowerCase().trim() === targetAssigned) return true;
+      if (targetName && c.teacherName && c.teacherName.toLowerCase().trim() === targetName) return true;
+      return false;
+    });
+  }, [classesList, teachers]);
+
+  // Classrooms created by currently selected teacher in Teacher-Wise mode
+  const activeTeacherCreatedClasses = useMemo(() => {
+    return getTeacherCreatedClasses(selectedTeacherIdForClassroom);
+  }, [getTeacherCreatedClasses, selectedTeacherIdForClassroom]);
+
+  // Keep selected teacher & class in sync
+  React.useEffect(() => {
+    if (!selectedTeacherIdForClassroom && teachers.length > 0) {
+      setSelectedTeacherIdForClassroom(teachers[0].id);
+    }
+  }, [teachers, selectedTeacherIdForClassroom]);
+
+  React.useEffect(() => {
+    if (activeTeacherCreatedClasses.length > 0) {
+      if (!selectedClassIdForTeacher || !activeTeacherCreatedClasses.some(c => c.id === selectedClassIdForTeacher)) {
+        setSelectedClassIdForTeacher(activeTeacherCreatedClasses[0].id);
+      }
+    } else {
+      setSelectedClassIdForTeacher('');
+    }
+  }, [activeTeacherCreatedClasses, selectedClassIdForTeacher]);
 
   // Load Upcoming Birthdays
   const upcomingBirthdays = useMemo(() => {
@@ -557,10 +613,17 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
     if (studentViewMode === 'teacher-wise') {
       const selTeacher = (teachers || []).find(t => t && t.id === selectedTeacherIdForClassroom);
-      if (selTeacher && selTeacher.assignedClass) {
+      const teacherCreatedClasses = getTeacherCreatedClasses(selectedTeacherIdForClassroom);
+      const activeClass = teacherCreatedClasses.find(c => c.id === selectedClassIdForTeacher) || teacherCreatedClasses[0];
+
+      if (activeClass) {
+        list = list.filter(s => s && (s.classId === activeClass.id || (s.className && s.className.toLowerCase() === activeClass.className.toLowerCase())));
+      } else if (selTeacher && selTeacher.assignedClass) {
         list = list.filter(s => s && s.className && s.className.toLowerCase() === selTeacher.assignedClass?.toLowerCase());
       } else if (selTeacher) {
         list = list.filter(s => s && s.teacherName === selTeacher.name);
+      } else {
+        list = [];
       }
     }
 
@@ -965,6 +1028,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     const targetPeriod = periodNum || 1;
     const timing = DEFAULT_PERIOD_TIMINGS[targetPeriod - 1] || DEFAULT_PERIOD_TIMINGS[0];
     const selTeacher = teachers.find(t => t.id === teacherId) || (teachers.length > 0 ? teachers[0] : null);
+    const teacherCreatedClasses = selTeacher ? getTeacherCreatedClasses(selTeacher.id) : [];
 
     setAdminEditingSlot(null);
     setAdminSlotFormData({
@@ -974,7 +1038,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       endTime: timing.endTime,
       subject: selTeacher?.designation?.includes('Physics') ? 'Physics' : selTeacher?.designation?.includes('Chemistry') ? 'Chemistry' : 'Mathematics',
       subjectCode: 'SUB',
-      className: className || selTeacher?.assignedClass || classesList[0]?.className || 'Class 12 Science A',
+      className: className || teacherCreatedClasses[0]?.className || selTeacher?.assignedClass || '',
       teacherId: selTeacher?.id || 'teach-default-1',
       teacherName: selTeacher?.name || 'Class Teacher',
       roomNumber: 'Room 101',
@@ -1920,11 +1984,20 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                   <div className="flex flex-wrap items-center gap-2.5">
                     {teachers.map(t => {
                       const isSel = t.id === selectedTeacherIdForClassroom;
+                      const teacherCreatedCount = getTeacherCreatedClasses(t.id).length;
                       return (
                         <button
                           key={t.id}
                           type="button"
-                          onClick={() => setSelectedTeacherIdForClassroom(t.id)}
+                          onClick={() => {
+                            setSelectedTeacherIdForClassroom(t.id);
+                            const tClasses = getTeacherCreatedClasses(t.id);
+                            if (tClasses.length > 0) {
+                              setSelectedClassIdForTeacher(tClasses[0].id);
+                            } else {
+                              setSelectedClassIdForTeacher('');
+                            }
+                          }}
                           className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2.5 cursor-pointer ${
                             isSel
                               ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-950/60 ring-2 ring-purple-400/50'
@@ -1944,12 +2017,58 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                           <div className="text-left">
                             <span className="block font-bold">{t.name}</span>
                             <span className="text-[10px] text-purple-200 block font-normal">
-                              {t.assignedClass || 'Class 12'}
+                              {t.assignedClass || 'Class Teacher'} • {teacherCreatedCount} {teacherCreatedCount === 1 ? 'class' : 'classes'}
                             </span>
                           </div>
                         </button>
                       );
                     })}
+                  </div>
+
+                  {/* Selectable Classrooms created by this teacher */}
+                  <div className="pt-3 border-t border-[#2D3139]/80 space-y-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                      <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                        <BookOpen className="w-3.5 h-3.5 text-purple-400" />
+                        <span>Classrooms Created by {teachers.find(t => t.id === selectedTeacherIdForClassroom)?.name || 'this Teacher'} ({activeTeacherCreatedClasses.length}):</span>
+                      </span>
+                      <span className="text-[11px] text-amber-400 font-medium">
+                        Only classrooms created by this teacher are selectable
+                      </span>
+                    </div>
+
+                    {activeTeacherCreatedClasses.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {activeTeacherCreatedClasses.map(cls => {
+                          const isSelected = (selectedClassIdForTeacher === cls.id) || (!selectedClassIdForTeacher && activeTeacherCreatedClasses[0]?.id === cls.id);
+                          return (
+                            <button
+                              key={cls.id}
+                              type="button"
+                              onClick={() => setSelectedClassIdForTeacher(cls.id)}
+                              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+                                isSelected
+                                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-950/60 ring-2 ring-purple-400'
+                                  : 'bg-[#0F1115] text-slate-300 hover:bg-[#252830] border border-[#2D3139]'
+                              }`}
+                            >
+                              <School className="w-3.5 h-3.5 text-purple-300" />
+                              <span>{cls.className}</span>
+                              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                                isSelected ? 'bg-purple-950/80 text-purple-200' : 'bg-[#1A1C23] text-amber-400'
+                              }`}>
+                                {cls.classStrength || 0} students
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+                        <span>This teacher has not created any classrooms yet. Only classrooms created by this teacher will show up as selectable options for the school admin.</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1958,6 +2077,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
             {/* Teacher & Classroom Summary Card (When in Teacher-wise Classroom mode) */}
             {studentViewMode === 'teacher-wise' && (() => {
               const activeTeacher = teachers.find(t => t.id === selectedTeacherIdForClassroom) || (teachers.length > 0 ? teachers[0] : null);
+              const activeClass = activeTeacherCreatedClasses.find(c => c.id === selectedClassIdForTeacher) || activeTeacherCreatedClasses[0];
               const classroomStudents = displayedStudents;
               const boysCount = classroomStudents.filter(s => s.gender === 'male').length;
               const girlsCount = classroomStudents.filter(s => s.gender === 'female').length;
@@ -1986,7 +2106,9 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                           <span className="text-[10px] font-mono text-slate-400">School Code: {activeSchoolCode}</span>
                         </div>
                         <h4 className="text-base sm:text-lg font-black text-white mt-0.5">{activeTeacher?.name}</h4>
-                        <p className="text-xs text-amber-400 font-semibold">{activeTeacher?.designation || 'Class Teacher'} • {activeTeacher?.assignedClass || 'Class 12 Science A'}</p>
+                        <p className="text-xs text-amber-400 font-semibold">
+                          {activeTeacher?.designation || 'Class Teacher'} • {activeClass?.className || activeTeacher?.assignedClass || 'Classroom Division'}
+                        </p>
                       </div>
                     </div>
 
@@ -4746,10 +4868,12 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                     onChange={e => {
                       const tId = e.target.value;
                       const teacher = teachers.find(t => t.id === tId);
+                      const tClasses = getTeacherCreatedClasses(tId);
                       setAdminSlotFormData(f => ({
                         ...f,
                         teacherId: tId,
-                        teacherName: teacher?.name || ''
+                        teacherName: teacher?.name || '',
+                        className: tClasses[0]?.className || ''
                       }));
                     }}
                     className="w-full px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white text-xs focus:outline-none focus:border-amber-500 font-medium"
@@ -4767,15 +4891,36 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                     <School className="w-3.5 h-3.5 text-purple-400" />
                     <span>Classroom Division *</span>
                   </label>
-                  <select
-                    value={adminSlotFormData.className}
-                    onChange={e => setAdminSlotFormData(f => ({ ...f, className: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white text-xs focus:outline-none focus:border-amber-500 font-medium"
-                  >
-                    {classesList.map(c => (
-                      <option key={c.id} value={c.className}>{c.className}</option>
-                    ))}
-                  </select>
+                  {(() => {
+                    const tClasses = getTeacherCreatedClasses(adminSlotFormData.teacherId);
+                    return (
+                      <>
+                        <select
+                          value={adminSlotFormData.className}
+                          onChange={e => setAdminSlotFormData(f => ({ ...f, className: e.target.value }))}
+                          disabled={tClasses.length === 0}
+                          className="w-full px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white text-xs focus:outline-none focus:border-amber-500 font-medium disabled:opacity-50"
+                        >
+                          {tClasses.length === 0 ? (
+                            <option value="">No classrooms created by this teacher</option>
+                          ) : (
+                            tClasses.map(c => (
+                              <option key={c.id} value={c.className}>{c.className}</option>
+                            ))
+                          )}
+                        </select>
+                        {tClasses.length === 0 ? (
+                          <p className="text-[10px] text-amber-400 mt-0.5">
+                            Only classrooms created by this teacher can be scheduled.
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            Showing only classrooms created by this teacher.
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 

@@ -301,6 +301,13 @@ export const StorageService = {
     if (!newClass.createdAt) {
       newClass.createdAt = new Date().toISOString();
     }
+    newClass.isTeacherCreated = true;
+    if (!newClass.createdByTeacherId && (newClass.teacherId || currentTeacher?.id)) {
+      newClass.createdByTeacherId = newClass.teacherId || currentTeacher?.id || '';
+    }
+    if (!newClass.createdByTeacherEmail && (currentTeacher?.email || currentTeacher?.gmail)) {
+      newClass.createdByTeacherEmail = currentTeacher?.email || currentTeacher?.gmail || '';
+    }
 
     const preparedStudents = (initialStudents || []).map(s => ({
       ...s,

@@ -116,6 +116,9 @@ export interface ClassItem {
   teacherId?: string;
   teacherName?: string;
   schoolCode?: string;
+  isTeacherCreated?: boolean;
+  createdByTeacherId?: string;
+  createdByTeacherEmail?: string;
 }
 
 export interface TeacherInfo {

@@ -344,6 +344,10 @@ export function App() {
   ) => {
     if (isAdditionalClass) {
       const newClassId = `cls-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+      const session = StorageService.getAuthSession();
+      const currentTeacher = session.currentTeacher;
+      const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+
       const classItem: ClassItem = {
         id: newClassId,
         className: newClassInfo.className,
@@ -352,10 +356,17 @@ export function App() {
         section: newClassInfo.section,
         academicYear: newClassInfo.academicYear,
         classStrength: newStudents.length,
+        teacherId: currentTeacher?.id || '',
+        teacherName: currentTeacher?.name || '',
+        schoolCode: schoolCode,
+        isTeacherCreated: true,
+        createdByTeacherId: currentTeacher?.id || '',
+        createdByTeacherEmail: currentTeacher?.email || currentTeacher?.gmail || '',
         createdAt: new Date().toISOString()
       };
 
       StorageService.addNewClass(classItem, newStudents);
+      CloudSync.saveClassToSchool(schoolCode, classItem, newStudents).catch(() => {});
       refreshAllState(newClassId);
       showToast(`Created & switched to new class: ${classItem.className} (${newStudents.length} students)!`, 'success');
     } else {
