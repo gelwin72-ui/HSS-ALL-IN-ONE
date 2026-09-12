@@ -469,7 +469,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     let allExams: Exam[] = [];
     let totalMarksSum = 0;
     let totalMarksCount = 0;
-    const allStudentsList: Array<Student & { className: string; teacherName: string; classId: string }> = [];
+    const allStudentsList: Array<Student & { className: string; teacherName: string; classId: string; attendancePercentage?: number }> = [];
 
     const classMetrics: Record<string, {
       studentsCount: number;
@@ -497,11 +497,25 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
       studs.forEach(s => {
         if (!s) return;
+        let sPres = 0;
+        let sDays = 0;
+        atts.forEach(a => {
+          if (!a) return;
+          const p = Array.isArray(a.presentStudentIds) && a.presentStudentIds.includes(s.id);
+          const ab = Array.isArray(a.absentStudentIds) && a.absentStudentIds.includes(s.id);
+          if (p || ab) {
+            sDays++;
+            if (p) sPres++;
+          }
+        });
+        const attPct = sDays > 0 ? Math.round((sPres / sDays) * 100) : undefined;
+
         allStudentsList.push({
           ...s,
           className: cls.className || 'Class',
           teacherName: matchingTeacher ? matchingTeacher.name : 'Class In-charge',
-          classId: cls.id
+          classId: cls.id,
+          attendancePercentage: attPct
         });
       });
 
@@ -553,31 +567,31 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
       const academicAvg = classMarksCount > 0
         ? Math.round(classMarksTotal / classMarksCount)
-        : 84 + (idx * 2);
+        : 0;
 
-      const rate = classTotal > 0 ? Math.round((classPresent / classTotal) * 100) : 92.5;
+      const rate = classTotal > 0 ? Math.round((classPresent / classTotal) * 100) : 0;
 
       classMetrics[cls.id] = {
         studentsCount: studs.length,
         attendanceRate: rate,
         examsCount: exms.length,
-        lastAttendanceDate: lastAttDate || '2026-08-26',
+        lastAttendanceDate: lastAttDate || '—',
         academicAvg
       };
     });
 
     const overallAttendanceRate = allAttendanceCount > 0
       ? Math.round((allAttendancePresent / allAttendanceCount) * 100)
-      : 93.4;
+      : 0;
 
     const overallAcademicAverage = totalMarksCount > 0
       ? Math.round(totalMarksSum / totalMarksCount)
-      : 86.8;
+      : 0;
 
     return {
-      totalStudents: totalStudents || 45,
-      totalBoys: totalBoys || 23,
-      totalGirls: totalGirls || 22,
+      totalStudents,
+      totalBoys,
+      totalGirls,
       overallAttendanceRate,
       overallAcademicAverage,
       classMetrics,
@@ -846,12 +860,12 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     const headers = ['Roll No', 'Admission No', 'Student Name', 'Gender', 'Class & Division', 'Parent/Guardian Phone', 'Attendance %'];
     const rows = crossClassData.allStudentsList.map(s => [
       s.rollNo,
-      s.admissionNo || `ADM-${s.rollNo + 1000}`,
+      s.admissionNo || `ADM-${s.rollNo}`,
       `"${s.name}"`,
       s.gender,
       `"${s.className}"`,
-      s.guardianPhone || '+91 98470 00000',
-      '94%'
+      s.guardianPhone || '',
+      s.attendancePercentage !== undefined ? `${s.attendancePercentage}%` : '—'
     ]);
 
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
@@ -981,7 +995,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
         standard: teacherFormData.standard,
         stream: teacherFormData.stream,
         section: teacherFormData.section,
-        phone: teacherFormData.phone.trim() || '+91 98470 00000',
+        phone: teacherFormData.phone.trim(),
         schoolName: schoolProfile.schoolName || admin.schoolName || "St. Sebastian's Higher Secondary School",
         schoolCode: admin.schoolCode || 'SSHSS@111213',
         dob: teacherFormData.dob || undefined,
@@ -1178,9 +1192,9 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
         }
 
         setImportPreview({
-          teachersCount: teachersCount || 4,
-          classesCount: classesCount || 3,
-          studentsCount: studentsCount || 45,
+          teachersCount,
+          classesCount,
+          studentsCount,
           schoolName: parsed.schoolProfile?.schoolName || 'Imported School'
         });
       } catch (err: any) {
@@ -1336,7 +1350,9 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl sm:text-3xl font-black text-white">{teachers.length}</span>
-                  <span className="text-[10px] text-emerald-400 font-semibold font-mono">100% Active</span>
+                  <span className="text-[10px] text-emerald-400 font-semibold font-mono">
+                    {teachers.length > 0 ? `${teachers.filter(t => t.status === 'active' || !t.status).length} Active` : '0 Active'}
+                  </span>
                 </div>
                 <span className="text-[11px] text-slate-400 block">Registered under {activeSchoolCode}</span>
               </div>
@@ -1348,9 +1364,13 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl sm:text-3xl font-black text-white">{classesList.length}</span>
-                  <span className="text-[10px] text-purple-300 font-semibold">Science & Comm</span>
+                  <span className="text-[10px] text-purple-300 font-semibold">
+                    {classesList.length > 0 ? `${classesList.length} Active` : '0 Active'}
+                  </span>
                 </div>
-                <span className="text-[11px] text-slate-400 block">Plus One & Plus Two</span>
+                <span className="text-[11px] text-slate-400 block">
+                  {classesList.length > 0 ? 'Recorded divisions' : 'No classes registered'}
+                </span>
               </div>
 
               <div className="p-4 rounded-2xl bg-[#0F1115]/90 border border-[#2D3139] space-y-1">
@@ -1360,9 +1380,13 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl sm:text-3xl font-black text-white">{crossClassData.totalStudents}</span>
-                  <span className="text-[10px] text-emerald-400 font-semibold font-mono">{crossClassData.totalBoys}B • {crossClassData.totalGirls}G</span>
+                  <span className="text-[10px] text-emerald-400 font-semibold font-mono">
+                    {crossClassData.totalStudents > 0 ? `${crossClassData.totalBoys}B • ${crossClassData.totalGirls}G` : '0 Enrolled'}
+                  </span>
                 </div>
-                <span className="text-[11px] text-slate-400 block">Across all teacher rosters</span>
+                <span className="text-[11px] text-slate-400 block">
+                  {crossClassData.totalStudents > 0 ? 'Across all teacher rosters' : 'No student records'}
+                </span>
               </div>
 
               <div className="p-4 rounded-2xl bg-[#0F1115]/90 border border-[#2D3139] space-y-1">
@@ -1371,8 +1395,12 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                   <TrendingUp className="w-4 h-4 text-sky-400" />
                 </div>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-2xl sm:text-3xl font-black text-white">{crossClassData.overallAcademicAverage}%</span>
-                  <span className="text-[10px] text-sky-400 font-semibold font-mono">{crossClassData.overallAttendanceRate}% Att.</span>
+                  <span className="text-2xl sm:text-3xl font-black text-white">
+                    {crossClassData.overallAcademicAverage > 0 ? `${crossClassData.overallAcademicAverage}%` : '0%'}
+                  </span>
+                  <span className="text-[10px] text-sky-400 font-semibold font-mono">
+                    {crossClassData.overallAttendanceRate > 0 ? `${crossClassData.overallAttendanceRate}% Att.` : '0% Att.'}
+                  </span>
                 </div>
                 <span className="text-[11px] text-slate-400 block">Calculated from terminal exams</span>
               </div>
@@ -3730,8 +3758,8 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                             <td className="py-2 px-3 font-semibold text-white">{s.name}</td>
                             <td className="py-2 px-3 text-slate-300">{s.className}</td>
                             <td className="py-2 px-3 text-slate-400 uppercase text-[10px]">{s.gender}</td>
-                            <td className="py-2 px-3 font-mono text-slate-400">{s.guardianPhone || '+91 98470 00000'}</td>
-                            <td className="py-2 px-3 text-right font-bold text-emerald-400">94%</td>
+                            <td className="py-2 px-3 font-mono text-slate-400">{s.guardianPhone || '—'}</td>
+                            <td className="py-2 px-3 text-right font-bold text-emerald-400">{s.attendancePercentage !== undefined ? `${s.attendancePercentage}%` : '—'}</td>
                           </tr>
                         ))}
                       </tbody>

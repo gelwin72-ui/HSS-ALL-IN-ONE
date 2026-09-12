@@ -536,10 +536,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         const PRE_AUTHORIZED_EMAILS = new Set([
           'lincythomas1911@gmail.com',
           'gelwin72@gmail.com',
-          'joicegeorge1910@gmail.com',
-          'admin1@gmail.com',
-          'admin2@gmail.com',
-          'admin3@gmail.com'
+          'joicegeorge1910@gmail.com'
         ]);
         if (PRE_AUTHORIZED_EMAILS.has(cleanQuery)) {
           setErrorMsg('This teacher account has been permanently removed from this school. To access the School Admin Panel, please use the "School Admin Login" tab.');
@@ -715,10 +712,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       const PRE_AUTHORIZED_EMAILS = new Set([
         'lincythomas1911@gmail.com',
         'gelwin72@gmail.com',
-        'joicegeorge1910@gmail.com',
-        'admin1@gmail.com',
-        'admin2@gmail.com',
-        'admin3@gmail.com'
+        'joicegeorge1910@gmail.com'
       ]);
 
       const isKnownAdmin = PRE_AUTHORIZED_EMAILS.has(cleanGmail);

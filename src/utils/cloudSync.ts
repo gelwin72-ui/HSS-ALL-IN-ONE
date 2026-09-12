@@ -1802,10 +1802,7 @@ class CloudSyncManager {
     const PRE_AUTHORIZED_EMAILS = new Set([
       'lincythomas1911@gmail.com',
       'gelwin72@gmail.com',
-      'joicegeorge1910@gmail.com',
-      'admin1@gmail.com',
-      'admin2@gmail.com',
-      'admin3@gmail.com'
+      'joicegeorge1910@gmail.com'
     ]);
 
     const isPreAuthorized = PRE_AUTHORIZED_EMAILS.has(cleanEmail);

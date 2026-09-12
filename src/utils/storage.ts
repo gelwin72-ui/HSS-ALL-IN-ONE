@@ -160,6 +160,48 @@ export const StorageService = {
   init() {
     try {
       const initialized = localStorage.getItem(STORAGE_KEYS.INITIALIZED);
+      const demoCleaned = localStorage.getItem('hss_demo_data_purged_v1');
+
+      if (!demoCleaned) {
+        // Purge old demo/dummy data from local storage
+        const currentTeachers = this.getTeacherAccounts();
+        const cleanedTeachers = currentTeachers.filter(t => 
+          t && t.email && 
+          t.email.toLowerCase() !== 'teacher@gmail.com' && 
+          t.email.toLowerCase() !== 'ddjmann@gmail.com' &&
+          t.id !== 'teacher-1789232615710' &&
+          t.name !== 'Fff'
+        );
+        this.saveTeacherAccounts(cleanedTeachers);
+
+        // If active session belongs to a removed demo teacher, reset session
+        const session = this.getAuthSession();
+        if (session.currentTeacher && (
+          session.currentTeacher.email === 'ddjmann@gmail.com' ||
+          session.currentTeacher.id === 'teacher-1789232615710' ||
+          session.currentTeacher.name === 'Fff'
+        )) {
+          this.setAuthSession({
+            isLoggedIn: false,
+            role: null,
+            currentTeacher: null,
+            currentAdmin: null
+          });
+        }
+
+        // Clean demo classes if they have dummy teacher or zero active real teacher
+        const currentClasses = this.getClassesList();
+        const cleanedClasses = currentClasses.filter(c => 
+          c && c.createdByTeacherEmail !== 'ddjmann@gmail.com' &&
+          c.teacherName !== 'Fff'
+        );
+        if (cleanedClasses.length !== currentClasses.length) {
+          this.saveClassesList(cleanedClasses);
+        }
+
+        localStorage.setItem('hss_demo_data_purged_v1', 'true');
+      }
+
       if (!initialized) {
         this.saveSchoolProfile(DEFAULT_SCHOOL_PROFILE);
         this.saveClassInfo(DEFAULT_CLASS_INFO);
@@ -461,13 +503,13 @@ export const StorageService = {
           session.currentTeacher = { ...accounts[matchedIdx] };
           this.setAuthSession(session);
         }
-      } else if (info.teacherName) {
+      } else if (info.teacherName && info.teacherName.trim() && info.email && info.email.trim()) {
         // Create new teacher record linked to this school code
         const newTeacher: TeacherAccount = {
           id: `teach-${Date.now().toString(36)}`,
-          name: info.teacherName,
-          email: info.email || 'teacher@gmail.com',
-          phone: info.phone || '+91 98470 00000',
+          name: info.teacherName.trim(),
+          email: info.email.trim(),
+          phone: info.phone ? info.phone.trim() : '',
           schoolName: schoolProfile.schoolName || 'Higher Secondary School',
           schoolCode: schoolProfile.schoolCode,
           designation: info.designation || 'Class Teacher',

@@ -389,7 +389,7 @@ export const TimetableScreen: React.FC<TimetableScreenProps> = ({
           <div className="p-3 rounded-2xl bg-[#0F1115]/90 border border-[#2D3139]">
             <span className="text-[11px] font-semibold text-slate-400 block">Class Divisions</span>
             <div className="flex items-baseline gap-1.5 mt-0.5">
-              <span className="text-xl font-black text-white">{teacherStats.classesTaughtCount || 1}</span>
+              <span className="text-xl font-black text-white">{teacherStats.classesTaughtCount}</span>
               <span className="text-[10px] text-sky-400 font-bold">Assigned</span>
             </div>
           </div>
