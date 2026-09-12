@@ -978,6 +978,56 @@ class CloudSyncManager {
     }
   }
 
+  public async cleanupOldDeletedTeachers(schoolCode: string): Promise<void> {
+    if (!schoolCode) return;
+    const cleanCode = schoolCode.trim().toUpperCase();
+
+    try {
+      let permDeletedIds: string[] = [];
+      if (database) {
+        const permSnap = await get(ref(database, `schools/${cleanCode}/permanentlyDeletedTeachers`)).catch(() => null);
+        if (permSnap && permSnap.exists()) {
+          const val = permSnap.val();
+          if (typeof val === 'object' && val !== null) {
+            permDeletedIds = Object.keys(val);
+          }
+        }
+        const delSnap = await get(ref(database, `schools/${cleanCode}/deletedTeachers`)).catch(() => null);
+        if (delSnap && delSnap.exists()) {
+          const val = delSnap.val();
+          if (typeof val === 'object' && val !== null) {
+            permDeletedIds = Array.from(new Set([...permDeletedIds, ...Object.keys(val)]));
+          }
+        }
+      }
+
+      const activeTeachers = await this.fetchSchoolTeachers(cleanCode);
+      for (const t of activeTeachers) {
+        if (!t) continue;
+        const tId = t.id || t.uid || '';
+        const tEmail = (t.email || t.gmail || '').trim().toLowerCase();
+
+        if (
+          StorageService.isTeacherPermanentlyDeleted(tId, tEmail) ||
+          permDeletedIds.includes(tId) ||
+          (tEmail && permDeletedIds.includes(tEmail)) ||
+          (t as any).status === 'deleted' ||
+          (t as any).status === 'permanently_deleted'
+        ) {
+          if (database && tId) {
+            await remove(ref(database, `schools/${cleanCode}/teachers/${tId}`)).catch(() => {});
+            await remove(ref(database, `teachers/${tId}`)).catch(() => {});
+          }
+          if (firestore && tId) {
+            await fsDeleteDoc(fsDoc(firestore, `schools/${cleanCode}/teachers/${tId}`)).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Cleanup old deleted teachers note:', e);
+    }
+  }
+
   public async saveClassToSchool(schoolCode: string, classItem: ClassItem, students?: Student[]): Promise<boolean> {
     if (!schoolCode || !classItem || !classItem.id) return false;
     const cleanCode = schoolCode.trim().toUpperCase();

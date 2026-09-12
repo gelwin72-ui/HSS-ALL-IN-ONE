@@ -254,6 +254,9 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   React.useEffect(() => {
     if (!activeSchoolCode) return;
 
+    // Run one-time cleanup of old deleted teacher records
+    CloudSync.cleanupOldDeletedTeachers(activeSchoolCode).catch(() => {});
+
     // 1. Subscribe to real-time teacher roster
     const unsubTeachers = CloudSync.listenToSchoolTeachers(activeSchoolCode, (teachersList) => {
       setRemoteTeachers(teachersList);

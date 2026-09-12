@@ -244,38 +244,43 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     let firebaseUid = 'teacher-' + Date.now();
     const initialClassId = 'class-' + Date.now();
 
+    // Check if permanently deleted
+    if (StorageService.isTeacherPermanentlyDeleted(undefined, cleanEmail)) {
+      setErrorMsg('Access Denied: This teacher account has been permanently removed by the School Administrator.');
+      return;
+    }
+
     setIsLoading(true);
     setLoadingText('Setting up teacher profile...');
 
     try {
-      // Fast Firebase Auth registration with 1.2s timeout so slow networks do not freeze login
+      // Firebase Auth registration or login
       if (cleanEmail) {
         try {
-          const authTask = createUserWithEmailAndPassword(auth, cleanEmail, signupPassword)
-            .then(cred => {
-              if (cred.user) {
-                updateProfile(cred.user, { displayName: signupName.trim() }).catch(() => {});
-                return cred.user.uid;
-              }
-              return null;
-            })
-            .catch(async (authErr: any) => {
-              if (authErr?.code === 'auth/email-already-in-use') {
-                const signRes = await signInWithEmailAndPassword(auth, cleanEmail, signupPassword).catch(() => null);
-                return signRes?.user?.uid || null;
-              }
-              return null;
-            });
+          let userCred: any = null;
+          try {
+            userCred = await createUserWithEmailAndPassword(auth, cleanEmail, signupPassword);
+            if (userCred?.user) {
+              await updateProfile(userCred.user, { displayName: signupName.trim() }).catch(() => {});
+            }
+          } catch (createErr: any) {
+            if (createErr?.code === 'auth/email-already-in-use') {
+              userCred = await signInWithEmailAndPassword(auth, cleanEmail, signupPassword).catch(() => null);
+            }
+          }
 
-          const timeoutPromise = new Promise<null>(res => setTimeout(() => res(null), 1200));
-          const resolvedUid = await Promise.race([authTask, timeoutPromise]);
-          if (resolvedUid) {
-            firebaseUid = resolvedUid;
+          if (userCred?.user?.uid) {
+            firebaseUid = userCred.user.uid;
+          } else if (auth?.currentUser?.uid) {
+            firebaseUid = auth.currentUser.uid;
           }
         } catch (authErr: any) {
           console.warn('Firebase Auth note:', authErr);
         }
       }
+
+      // Clear any temporary deletion flags for re-entry
+      StorageService.removeTemporarilyDeletedTeacherId(firebaseUid, cleanEmail);
 
       const nowIso = new Date().toISOString();
       const newAccount: TeacherAccount = {
@@ -500,7 +505,33 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     setLoadingText('Signing in...');
 
     try {
-      // Fast path 1: Instant check against local storage accounts (0 milliseconds!)
+      // Check permanent deletion status first
+      if (StorageService.isTeacherPermanentlyDeleted(undefined, cleanQuery)) {
+        setErrorMsg('Access Denied: Your teacher account has been permanently removed by the School Administrator.');
+        setIsLoading(false);
+        return;
+      }
+
+      let authUid: string | null = null;
+      if (cleanQuery.includes('@')) {
+        try {
+          let cred: any = null;
+          try {
+            cred = await signInWithEmailAndPassword(auth, cleanQuery, loginPassword);
+          } catch (signInErr: any) {
+            if (signInErr?.code === 'auth/user-not-found' || signInErr?.code === 'auth/invalid-credential') {
+              cred = await createUserWithEmailAndPassword(auth, cleanQuery, loginPassword).catch(() => null);
+            }
+          }
+          if (cred?.user?.uid) {
+            authUid = cred.user.uid;
+          }
+        } catch (authErr) {
+          console.warn('Teacher login Firebase Auth warning:', authErr);
+        }
+      }
+
+      // Check against local storage accounts or cloud lookup
       const localAccounts = StorageService.getTeacherAccounts();
       let match: TeacherAccount | null = localAccounts.find(
         a =>
@@ -511,42 +542,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       ) || null;
 
       if (match) {
-        // Verify DOB if entered
         if (loginDob && match.dob && normalizeDob(match.dob) !== normalizeDob(loginDob) && match.dob !== loginDob.trim()) {
           setErrorMsg('Incorrect date of birth. Please try again.');
           setIsLoading(false);
           return;
         }
-
-        // Verify password
-        if (match.password && match.password !== loginPassword && match.password !== 'google-auth-linked') {
-          // If local password doesn't match, verify against Firebase Auth with fast timeout
-          let firebaseOk = false;
-          if (cleanQuery.includes('@')) {
-            try {
-              const cred = await Promise.race([
-                signInWithEmailAndPassword(auth, cleanQuery, loginPassword),
-                new Promise<null>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1200))
-              ]).catch(() => null);
-              if (cred && cred.user) firebaseOk = true;
-            } catch {}
-          }
-          if (!firebaseOk) {
-            setErrorMsg('Invalid email or password. Please verify your credentials and try again.');
-            setIsLoading(false);
-            return;
-          }
-        }
       } else {
-        // Fast path 2: Teacher not found locally (new device/browser) - run Auth and Cloud lookups in parallel with 1.5s timeout
-        const timeoutPromise = new Promise<null>(res => setTimeout(() => res(null), 1500));
-
-        const [authRes, credResult] = await Promise.all([
-          cleanQuery.includes('@')
-            ? Promise.race([signInWithEmailAndPassword(auth, cleanQuery, loginPassword), timeoutPromise]).catch(() => null)
-            : Promise.resolve(null),
-          Promise.race([CloudSync.fetchTeacherCredential(cleanQuery, cleanSchoolCode), timeoutPromise]).catch(() => null)
-        ]);
+        // Fast path 2: Teacher not found locally (new device/browser) - run Cloud lookup
+        const credResult = await CloudSync.fetchTeacherCredential(cleanQuery, cleanSchoolCode).catch(() => null);
 
         if (credResult && (credResult as any).found) {
           const res = credResult as any;
@@ -560,12 +563,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           }
         }
 
-        if (!match && authRes && (authRes as any).user) {
-          const user = (authRes as any).user;
+        if (!match && (authUid || auth?.currentUser?.uid)) {
+          const activeUid = authUid || auth?.currentUser?.uid || `teach-${Date.now()}`;
           match = {
-            id: user.uid,
-            uid: user.uid,
-            name: user.displayName || cleanQuery.split('@')[0] || 'Teacher',
+            id: activeUid,
+            uid: activeUid,
+            name: cleanQuery.split('@')[0] || 'Teacher',
             email: cleanQuery,
             gmail: cleanQuery,
             phone: '',
@@ -587,19 +590,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         return;
       }
 
-      // Clear local deleted teacher flags if present
+      const effectiveUid = authUid || match.uid || match.id;
+      match.id = effectiveUid;
+      match.uid = effectiveUid;
+      match.status = 'active';
+      match.schoolCode = cleanSchoolCode;
+      match.lastActiveAt = new Date().toISOString();
+
+      // Clear any temporary deletion flags upon re-entry
       StorageService.removeDeletedTeacherId(match.id, match.email || match.gmail);
       if (match.uid) StorageService.removeDeletedTeacherId(match.uid);
-
-      // Check account status
-      if (match.status && match.status !== 'active') {
-        setErrorMsg('Access Denied: Your teacher account status is inactive or suspended.');
-        setIsLoading(false);
-        return;
-      }
-
-      match.lastActiveAt = new Date().toISOString();
-      if (!match.schoolCode) match.schoolCode = cleanSchoolCode;
 
       // Update local storage and auth session instantly
       const allAccounts = StorageService.getTeacherAccounts();
@@ -627,7 +627,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         currentAdmin: null
       });
 
-      // Background cloud sync (non-blocking)
+      // Background cloud sync
       if (match.email) {
         const syncEmail = match.email.toLowerCase();
         CloudSync.setActiveSyncEmail(syncEmail);
@@ -649,18 +649,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           accessMethod: 'Teacher Login',
           role: 'teacher',
           success: true,
-          details: `Teacher logged in: ${match.email || match.name}`
+          details: `Teacher logged in successfully: ${match.name}`
         }).catch(() => {});
       }
 
-      // Save teacher credentials in Firebase Realtime Database under 'Gmail and Password'
-      const teacherCredEmail = (match.email || (cleanQuery.includes('@') ? cleanQuery : '')).toLowerCase().trim();
-      const teacherCredPassword = loginPassword || match.password || '';
-      if (teacherCredEmail && teacherCredPassword) {
-        storeCredentialsInRTDB(teacherCredEmail, teacherCredPassword).catch(() => {});
+      if (match.email && loginPassword) {
+        storeCredentialsInRTDB(match.email, loginPassword).catch(() => {});
       }
 
-      setSuccessMsg(`Welcome back, ${match.name}!`);
+      setSuccessMsg(`Welcome back, ${match.name}! Accessing your classroom portal...`);
       onLoginSuccess(match);
     } catch (err: any) {
       console.warn('Teacher login error:', err);
