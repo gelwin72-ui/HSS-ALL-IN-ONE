@@ -759,13 +759,52 @@ export const StorageService = {
     notifyMutation();
   },
 
+  getDeletedTeacherIds(): string[] {
+    try {
+      const val = localStorage.getItem('hss_deleted_teacher_ids_v1');
+      if (val) {
+        const parsed = JSON.parse(val);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  },
+
+  addDeletedTeacherId(id: string, email?: string) {
+    if (!id && !email) return;
+    const deleted = this.getDeletedTeacherIds();
+    const cleanEmail = (email || '').trim().toLowerCase();
+    
+    if (id && !deleted.includes(id)) {
+      deleted.push(id);
+    }
+    if (cleanEmail && !deleted.includes(cleanEmail)) {
+      deleted.push(cleanEmail);
+    }
+    localStorage.setItem('hss_deleted_teacher_ids_v1', JSON.stringify(deleted));
+    notifyMutation();
+  },
+
+  isTeacherDeleted(id?: string, email?: string): boolean {
+    const deleted = this.getDeletedTeacherIds();
+    if (deleted.length === 0) return false;
+    const cleanId = (id || '').trim();
+    const cleanEmail = (email || '').trim().toLowerCase();
+    
+    if (cleanId && deleted.includes(cleanId)) return true;
+    if (cleanEmail && deleted.includes(cleanEmail)) return true;
+    return false;
+  },
+
   getTeacherAccounts(): TeacherAccount[] {
     try {
       const val = localStorage.getItem(STORAGE_KEYS.TEACHER_ACCOUNTS);
       if (val) {
         const parsed = JSON.parse(val);
         if (Array.isArray(parsed)) {
-          return parsed;
+          return parsed.filter(a => a && !this.isTeacherDeleted(a.id, a.email || a.gmail));
         }
       }
       return [];
@@ -775,7 +814,8 @@ export const StorageService = {
   },
 
   saveTeacherAccounts(accounts: TeacherAccount[]) {
-    localStorage.setItem(STORAGE_KEYS.TEACHER_ACCOUNTS, JSON.stringify(accounts));
+    const filtered = (accounts || []).filter(a => a && !this.isTeacherDeleted(a.id, a.email || a.gmail));
+    localStorage.setItem(STORAGE_KEYS.TEACHER_ACCOUNTS, JSON.stringify(filtered));
     notifyMutation();
   },
 
@@ -849,9 +889,33 @@ export const StorageService = {
   },
 
   deleteTeacherAccount(teacherId: string): boolean {
-    let accounts = this.getTeacherAccounts();
-    accounts = accounts.filter(a => a.id !== teacherId);
-    this.saveTeacherAccounts(accounts);
+    const rawVal = localStorage.getItem(STORAGE_KEYS.TEACHER_ACCOUNTS);
+    let allAccounts: TeacherAccount[] = [];
+    try {
+      if (rawVal) allAccounts = JSON.parse(rawVal);
+    } catch (e) {}
+
+    const target = allAccounts.find(a => a && (a.id === teacherId || a.uid === teacherId));
+    if (target) {
+      this.addDeletedTeacherId(target.id, target.email || target.gmail);
+      if (target.uid) this.addDeletedTeacherId(target.uid);
+    } else {
+      this.addDeletedTeacherId(teacherId);
+    }
+
+    const remaining = allAccounts.filter(a => a && a.id !== teacherId && a.uid !== teacherId);
+    localStorage.setItem(STORAGE_KEYS.TEACHER_ACCOUNTS, JSON.stringify(remaining));
+
+    const session = this.getAuthSession();
+    if (session.currentTeacher && (session.currentTeacher.id === teacherId || session.currentTeacher.uid === teacherId)) {
+      this.setAuthSession({
+        isLoggedIn: false,
+        role: 'teacher',
+        currentTeacher: null,
+        currentAdmin: null
+      });
+    }
+
     notifyMutation();
     return true;
   },

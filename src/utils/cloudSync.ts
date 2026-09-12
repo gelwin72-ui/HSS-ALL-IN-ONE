@@ -837,9 +837,14 @@ class CloudSyncManager {
     return true;
   }
 
-  public async deleteTeacherFromSchool(schoolCode: string, teacherId: string): Promise<boolean> {
+  public async deleteTeacherFromSchool(schoolCode: string, teacherId: string, teacherEmail?: string): Promise<boolean> {
     if (!schoolCode || !teacherId) return false;
     const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
+    const cleanEmail = (teacherEmail || '').trim().toLowerCase();
+    const sanitizedEmail = cleanEmail ? this.sanitizeEmailKey(cleanEmail) : '';
+
+    // Mark as deleted locally
+    StorageService.addDeletedTeacherId(teacherId, cleanEmail);
 
     if (database) {
       try {
@@ -848,6 +853,23 @@ class CloudSyncManager {
 
         const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${teacherId}`);
         await remove(schoolTeacherRef);
+
+        const userRefPath = ref(database, `users/${teacherId}`);
+        await remove(userRefPath);
+
+        const deletedTeacherRef = ref(database, `schools/${cleanCode}/deletedTeachers/${teacherId}`);
+        await set(deletedTeacherRef, true);
+
+        if (sanitizedEmail) {
+          const deletedEmailRef = ref(database, `schools/${cleanCode}/deletedTeacherEmails/${sanitizedEmail}`);
+          await set(deletedEmailRef, true);
+
+          const emailAccountRef = ref(database, `email_accounts/${sanitizedEmail}`);
+          await remove(emailAccountRef);
+
+          const gmailPasswordRef = ref(database, `Gmail and Password/${sanitizedEmail}`);
+          await remove(gmailPasswordRef);
+        }
       } catch (err) {
         console.warn('Error deleting teacher from RTDB:', err);
       }
@@ -857,6 +879,10 @@ class CloudSyncManager {
       try {
         const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${teacherId}`);
         await fsDeleteDoc(teacherDocRef);
+        const userDocRef = fsDoc(firestore, `users/${teacherId}`);
+        await fsDeleteDoc(userDocRef);
+        const deletedTeacherDocRef = fsDoc(firestore, `schools/${cleanCode}/deletedTeachers/${teacherId}`);
+        await fsSetDoc(deletedTeacherDocRef, { deleted: true, deletedAt: new Date().toISOString() });
       } catch (fsErr) {
         console.warn('Firestore deleteTeacherFromSchool warning:', fsErr);
       }
@@ -1041,7 +1067,9 @@ class CloudSyncManager {
           if (snapshot.exists()) {
             snapshot.forEach(childSnap => {
               const t = childSnap.val() as TeacherAccount;
-              if (t) remoteTeachers.push(t);
+              if (t && !StorageService.isTeacherDeleted(t.id, t.email || t.gmail)) {
+                remoteTeachers.push(t);
+              }
             });
           }
 

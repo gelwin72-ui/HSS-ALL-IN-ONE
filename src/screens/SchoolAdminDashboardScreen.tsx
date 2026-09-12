@@ -360,7 +360,8 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       }
     });
 
-    return Array.from(map.values());
+    const allTeachers = Array.from(map.values());
+    return allTeachers.filter(t => t && !StorageService.isTeacherDeleted(t.id, t.email || t.gmail));
   }, [activeSchoolCode, mutationCount, remoteTeachers]);
 
   // Load all classes in school (merged local and Firestore)
@@ -395,18 +396,22 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   const getTeacherCreatedClasses = useCallback((teacherId?: string, teacherEmail?: string, teacherName?: string): ClassItem[] => {
     if (!teacherId && !teacherEmail && !teacherName) return [];
     const safeClasses = Array.isArray(classesList) ? classesList : [];
-    const tObj = (teachers || []).find(t => t && (t.id === teacherId || (teacherEmail && t.email?.toLowerCase() === teacherEmail.toLowerCase())));
-    const targetId = teacherId || tObj?.id;
-    const targetEmail = (teacherEmail || tObj?.email || '').toLowerCase().trim();
-    const targetName = (teacherName || tObj?.name || '').toLowerCase().trim();
-    const targetAssigned = (tObj?.assignedClass || '').toLowerCase().trim();
+    const tObj = (teachers || []).find(t => t && (
+      t.id === teacherId ||
+      t.uid === teacherId ||
+      (teacherEmail && (
+        (t.email && t.email.toLowerCase() === teacherEmail.toLowerCase()) ||
+        (t.gmail && t.gmail.toLowerCase() === teacherEmail.toLowerCase())
+      ))
+    ));
+
+    const targetId = teacherId || tObj?.id || tObj?.uid;
+    const targetEmail = (teacherEmail || tObj?.email || tObj?.gmail || '').toLowerCase().trim();
 
     return safeClasses.filter(c => {
       if (!c) return false;
       if (targetId && (c.createdByTeacherId === targetId || c.teacherId === targetId)) return true;
       if (targetEmail && c.createdByTeacherEmail && c.createdByTeacherEmail.toLowerCase() === targetEmail) return true;
-      if (targetAssigned && c.className && c.className.toLowerCase().trim() === targetAssigned) return true;
-      if (targetName && c.teacherName && c.teacherName.toLowerCase().trim() === targetName) return true;
       return false;
     });
   }, [classesList, teachers]);
@@ -1006,15 +1011,13 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   };
 
   const handleDeleteTeacher = async (teacherId: string, teacherName: string) => {
-    if (confirm(`Are you sure you want to delete this teacher? The teacher's account and data will be permanently removed from the School Admin Panel.`)) {
-      const ok = StorageService.deleteTeacherAccount(teacherId);
-      if (ok) {
-        await CloudSync.deleteTeacherFromSchool(admin.schoolCode, teacherId).catch(() => {});
-        showToast(`Teacher deleted successfully.`);
-        triggerRefresh();
-      } else {
-        showToast('Cannot delete the only remaining teacher account.');
-      }
+    const targetTeacher = teachers.find(t => t.id === teacherId);
+    if (confirm(`Are you sure you want to permanently delete teacher ${teacherName}? This account will be permanently removed from the School Admin Panel.`)) {
+      const teacherEmail = targetTeacher?.email || targetTeacher?.gmail || '';
+      StorageService.deleteTeacherAccount(teacherId);
+      await CloudSync.deleteTeacherFromSchool(activeSchoolCode, teacherId, teacherEmail).catch(() => {});
+      showToast(`Teacher ${teacherName} permanently deleted.`);
+      triggerRefresh();
     }
   };
 
@@ -4647,54 +4650,92 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 </div>
               </div>
 
-              {/* Class Assignment Details: Standard, Stream, Section */}
-              <div className="space-y-1.5 p-3 rounded-2xl bg-[#0F1115] border border-[#2D3139]">
-                <label className="text-[11px] font-bold text-amber-300 block">Class Assignment Details</label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Class / Standard</span>
-                    <select
-                      value={teacherFormData.standard}
-                      onChange={e => setTeacherFormData(f => ({ ...f, standard: e.target.value }))}
-                      className="w-full px-2.5 py-2 rounded-xl bg-[#1A1C23] border border-[#2D3139] text-white text-xs focus:outline-none focus:border-amber-500"
-                    >
-                      <option value="Class 12 (Plus Two)">Class 12 (Plus Two)</option>
-                      <option value="Class 11 (Plus One)">Class 11 (Plus One)</option>
-                      <option value="Class 10 (SSLC)">Class 10 (SSLC)</option>
-                    </select>
-                  </div>
+              {/* Class Assignment Details: Only Show Teacher-Created Classrooms */}
+              {(() => {
+                const teacherClasses = editingTeacher
+                  ? getTeacherCreatedClasses(editingTeacher.id, editingTeacher.email || editingTeacher.gmail, editingTeacher.name)
+                  : [];
 
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Stream</span>
-                    <select
-                      value={teacherFormData.stream}
-                      onChange={e => setTeacherFormData(f => ({ ...f, stream: e.target.value }))}
-                      className="w-full px-2.5 py-2 rounded-xl bg-[#1A1C23] border border-[#2D3139] text-white text-xs focus:outline-none focus:border-amber-500"
-                    >
-                      <option value="Bio-Science">Bio-Science</option>
-                      <option value="Computer Science">Computer Science</option>
-                      <option value="Commerce">Commerce</option>
-                      <option value="Humanities">Humanities</option>
-                      <option value="General">General</option>
-                    </select>
-                  </div>
+                return (
+                  <div className="space-y-2.5 p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139]">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                        <GraduationCap className="w-4 h-4 text-amber-400" />
+                        <span>Class Assignment Details</span>
+                      </label>
+                      <span className="text-[10px] text-slate-400">
+                        {editingTeacher ? `Teacher ID: ${editingTeacher.id}` : `School: ${activeSchoolCode}`}
+                      </span>
+                    </div>
 
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-slate-400 block font-semibold">Section</span>
-                    <select
-                      value={teacherFormData.section}
-                      onChange={e => setTeacherFormData(f => ({ ...f, section: e.target.value }))}
-                      className="w-full px-2.5 py-2 rounded-xl bg-[#1A1C23] border border-[#2D3139] text-white text-xs focus:outline-none focus:border-amber-500"
-                    >
-                      <option value="A">Section A</option>
-                      <option value="B">Section B</option>
-                      <option value="C">Section C</option>
-                      <option value="D">Section D</option>
-                      <option value="E">Section E</option>
-                    </select>
+                    {teacherClasses.length === 0 ? (
+                      <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2.5">
+                        <Clock className="w-4 h-4 shrink-0 text-amber-400" />
+                        <span className="font-semibold">No classrooms created by this teacher yet.</span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-[11px] text-slate-400">
+                          Select an assigned classroom from the classrooms actually created by this teacher in the Teacher App:
+                        </p>
+                        <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                          {teacherClasses.map(cls => {
+                            const isSelected =
+                              teacherFormData.assignedClass === cls.className ||
+                              (teacherFormData.standard === cls.standard &&
+                               teacherFormData.stream === cls.stream &&
+                               teacherFormData.section === cls.section);
+
+                            return (
+                              <button
+                                key={cls.id}
+                                type="button"
+                                onClick={() => {
+                                  setTeacherFormData(f => ({
+                                    ...f,
+                                    assignedClass: cls.className,
+                                    standard: cls.standard,
+                                    stream: cls.stream,
+                                    section: cls.section
+                                  }));
+                                }}
+                                className={`w-full p-2.5 rounded-xl border text-left transition flex items-center justify-between cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-gradient-to-r from-amber-950/70 via-purple-950/70 to-amber-950/70 border-amber-500 text-white ring-2 ring-amber-400'
+                                    : 'bg-[#1A1C23] border-[#2D3139] text-slate-300 hover:bg-[#222530]'
+                                }`}
+                              >
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/30">
+                                      {cls.stream || 'General'}
+                                    </span>
+                                    <span className="text-xs font-black text-white">
+                                      {cls.standard || 'Class'}
+                                    </span>
+                                    <span className="text-xs font-bold text-sky-400">
+                                      Division {cls.section || 'A'}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 font-mono">
+                                    Classroom Name: {cls.className}
+                                  </div>
+                                </div>
+
+                                <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                                  isSelected ? 'border-amber-400 bg-amber-500 text-black' : 'border-slate-600'
+                                }`}>
+                                  {isSelected && <CheckCircle2 className="w-3 h-3" />}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Designation, Date of Birth & Phone */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
