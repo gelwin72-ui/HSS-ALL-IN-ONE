@@ -906,13 +906,66 @@ class CloudSyncManager {
     return true;
   }
 
+  public async isTeacherPermanentlyDeletedForSchool(
+    schoolCode: string,
+    uid?: string,
+    email?: string
+  ): Promise<boolean> {
+    const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanUid = (uid || '').trim();
+
+    if (StorageService.isTeacherPermanentlyDeleted(cleanUid, cleanEmail)) {
+      return true;
+    }
+
+    if (database) {
+      try {
+        if (cleanUid) {
+          const snapUid = await get(ref(database, `schools/${cleanCode}/permanentlyDeletedTeachers/${cleanUid}`)).catch(() => null);
+          if (snapUid && snapUid.exists() && (snapUid.val() === true || snapUid.val()?.permanentlyDeleted === true)) {
+            StorageService.addPermanentlyDeletedTeacherId(cleanUid, cleanEmail);
+            return true;
+          }
+        }
+        if (cleanEmail) {
+          const sanitizedEmail = this.sanitizeEmailKey(cleanEmail);
+          const snapEmail = await get(ref(database, `schools/${cleanCode}/permanentlyDeletedTeacherEmails/${sanitizedEmail}`)).catch(() => null);
+          if (snapEmail && snapEmail.exists() && (snapEmail.val() === true || snapEmail.val()?.permanentlyDeleted === true)) {
+            StorageService.addPermanentlyDeletedTeacherId(cleanUid, cleanEmail);
+            return true;
+          }
+        }
+      } catch (e) {
+        console.warn('RTDB perm delete check note:', e);
+      }
+    }
+
+    if (firestore) {
+      try {
+        if (cleanUid) {
+          const docRef = fsDoc(firestore, `schools/${cleanCode}/permanentlyDeletedTeachers/${cleanUid}`);
+          const docSnap = await fsGetDoc(docRef).catch(() => null);
+          if (docSnap && docSnap.exists() && docSnap.data()?.permanentlyDeleted === true) {
+            StorageService.addPermanentlyDeletedTeacherId(cleanUid, cleanEmail);
+            return true;
+          }
+        }
+      } catch (e) {
+        console.warn('Firestore perm delete check note:', e);
+      }
+    }
+
+    return false;
+  }
+
   public async permanentDeleteTeacherFromSchool(schoolCode: string, teacherId: string, teacherEmail?: string): Promise<boolean> {
     if (!schoolCode || !teacherId) return false;
     const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
     const cleanEmail = (teacherEmail || '').trim().toLowerCase();
     const sanitizedEmail = cleanEmail ? this.sanitizeEmailKey(cleanEmail) : '';
 
-    // Track permanent delete in local storage
+    // Track permanent delete in local storage for teacher membership
     StorageService.addPermanentlyDeletedTeacherId(teacherId, cleanEmail);
 
     if (database) {
@@ -923,24 +976,15 @@ class CloudSyncManager {
         const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${teacherId}`);
         await remove(schoolTeacherRef);
 
-        const userRefPath = ref(database, `users/${teacherId}`);
-        await remove(userRefPath);
-
         const permDeletedRef = ref(database, `schools/${cleanCode}/permanentlyDeletedTeachers/${teacherId}`);
-        await set(permDeletedRef, true);
+        await set(permDeletedRef, { permanentlyDeleted: true, deletedAt: new Date().toISOString() });
 
         const deletedTeacherRef = ref(database, `schools/${cleanCode}/deletedTeachers/${teacherId}`);
-        await set(deletedTeacherRef, true);
+        await set(deletedTeacherRef, { deleted: true, deletedAt: new Date().toISOString() });
 
         if (sanitizedEmail) {
-          const deletedEmailRef = ref(database, `schools/${cleanCode}/deletedTeacherEmails/${sanitizedEmail}`);
-          await set(deletedEmailRef, true);
-
-          const emailAccountRef = ref(database, `email_accounts/${sanitizedEmail}`);
-          await remove(emailAccountRef);
-
-          const gmailPasswordRef = ref(database, `Gmail and Password/${sanitizedEmail}`);
-          await remove(gmailPasswordRef);
+          const deletedEmailRef = ref(database, `schools/${cleanCode}/permanentlyDeletedTeacherEmails/${sanitizedEmail}`);
+          await set(deletedEmailRef, { permanentlyDeleted: true, deletedAt: new Date().toISOString() });
         }
       } catch (err) {
         console.warn('Error permanently deleting teacher from RTDB:', err);
@@ -951,8 +995,6 @@ class CloudSyncManager {
       try {
         const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${teacherId}`);
         await fsDeleteDoc(teacherDocRef);
-        const userDocRef = fsDoc(firestore, `users/${teacherId}`);
-        await fsDeleteDoc(userDocRef);
         const permDeletedDocRef = fsDoc(firestore, `schools/${cleanCode}/permanentlyDeletedTeachers/${teacherId}`);
         await fsSetDoc(permDeletedDocRef, { permanentlyDeleted: true, deletedAt: new Date().toISOString() });
         const deletedTeacherDocRef = fsDoc(firestore, `schools/${cleanCode}/deletedTeachers/${teacherId}`);

@@ -244,9 +244,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     let firebaseUid = 'teacher-' + Date.now();
     const initialClassId = 'class-' + Date.now();
 
-    // Check if permanently deleted
-    if (StorageService.isTeacherPermanentlyDeleted(undefined, cleanEmail)) {
-      setErrorMsg('Access Denied: This teacher account has been permanently removed by the School Administrator.');
+    // Check if permanently deleted for this school
+    const isPermDeleted = await CloudSync.isTeacherPermanentlyDeletedForSchool(cleanSchoolCode, undefined, cleanEmail);
+    if (isPermDeleted) {
+      setErrorMsg('This teacher account has been permanently removed from this school. Please contact the School Administrator.');
       return;
     }
 
@@ -506,11 +507,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
 
     try {
       // Check permanent deletion status first
-      if (StorageService.isTeacherPermanentlyDeleted(undefined, cleanQuery)) {
-        setErrorMsg('Access Denied: Your teacher account has been permanently removed by the School Administrator.');
-        setIsLoading(false);
-        return;
-      }
+      let isPermDeleted = await CloudSync.isTeacherPermanentlyDeletedForSchool(cleanSchoolCode, undefined, cleanQuery);
 
       let authUid: string | null = null;
       if (cleanQuery.includes('@')) {
@@ -529,6 +526,28 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         } catch (authErr) {
           console.warn('Teacher login Firebase Auth warning:', authErr);
         }
+      }
+
+      if (!isPermDeleted && authUid) {
+        isPermDeleted = await CloudSync.isTeacherPermanentlyDeletedForSchool(cleanSchoolCode, authUid, cleanQuery);
+      }
+
+      if (isPermDeleted) {
+        const PRE_AUTHORIZED_EMAILS = new Set([
+          'lincythomas1911@gmail.com',
+          'gelwin72@gmail.com',
+          'joicegeorge1910@gmail.com',
+          'admin1@gmail.com',
+          'admin2@gmail.com',
+          'admin3@gmail.com'
+        ]);
+        if (PRE_AUTHORIZED_EMAILS.has(cleanQuery)) {
+          setErrorMsg('This teacher account has been permanently removed from this school. To access the School Admin Panel, please use the "School Admin Login" tab.');
+        } else {
+          setErrorMsg('This teacher account has been permanently removed from this school. Please contact the School Administrator.');
+        }
+        setIsLoading(false);
+        return;
       }
 
       // Check against local storage accounts or cloud lookup

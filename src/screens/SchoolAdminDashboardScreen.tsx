@@ -5184,7 +5184,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                     onClick={() => setShowPermanentConfirmation(false)}
                     className="px-4 py-2 rounded-xl bg-[#0F1115] hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-bold transition cursor-pointer"
                   >
-                    ← Go Back / Cancel
+                    Cancel
                   </button>
 
                   <button
@@ -5193,7 +5193,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                     className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white text-xs font-black transition shadow-lg shadow-rose-950/50 flex items-center gap-2 cursor-pointer"
                   >
                     <Trash2 className="w-4 h-4" />
-                    <span>Yes, Permanently Delete Teacher</span>
+                    <span>Permanently Delete</span>
                   </button>
                 </div>
               </>
