@@ -55,7 +55,9 @@ import {
   FileCheck,
   ClipboardList,
   MessageSquare,
-  Activity
+  Activity,
+  UserX,
+  AlertOctagon
 } from 'lucide-react';
 import {
   SchoolAdminAccount,
@@ -219,6 +221,10 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Two-Mode Teacher Deletion States
+  const [deleteModalTeacher, setDeleteModalTeacher] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [showPermanentConfirmation, setShowPermanentConfirmation] = useState<boolean>(false);
 
   // Teacher Review Remarks State (teacherId -> remark)
   const [teacherRemarks, setTeacherRemarks] = useState<Record<string, string>>({});
@@ -1010,15 +1016,39 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     reader.readAsDataURL(file);
   };
 
-  const handleDeleteTeacher = async (teacherId: string, teacherName: string) => {
-    const targetTeacher = teachers.find(t => t.id === teacherId);
-    if (confirm(`Are you sure you want to permanently delete teacher ${teacherName}? This account will be permanently removed from the School Admin Panel.`)) {
-      const teacherEmail = targetTeacher?.email || targetTeacher?.gmail || '';
-      StorageService.deleteTeacherAccount(teacherId);
-      await CloudSync.deleteTeacherFromSchool(activeSchoolCode, teacherId, teacherEmail).catch(() => {});
-      showToast(`Teacher ${teacherName} permanently deleted.`);
-      triggerRefresh();
-    }
+  const handleDeleteTeacher = (teacherId: string, teacherName: string) => {
+    const targetTeacher = teachers.find(t => t.id === teacherId || t.uid === teacherId);
+    const teacherEmail = targetTeacher?.email || targetTeacher?.gmail || '';
+    setDeleteModalTeacher({ id: teacherId, name: teacherName, email: teacherEmail });
+    setShowPermanentConfirmation(false);
+  };
+
+  const handleExecuteTemporaryDelete = async () => {
+    if (!deleteModalTeacher) return;
+    const { id, name, email } = deleteModalTeacher;
+    setDeleteModalTeacher(null);
+    setShowPermanentConfirmation(false);
+
+    StorageService.deleteTeacherAccount(id, false);
+    await CloudSync.deleteTeacherFromSchool(activeSchoolCode, id, email, false).catch(() => {});
+
+    setRemoteTeachers(prev => prev.filter(t => t.id !== id && t.uid !== id));
+    showToast(`Teacher ${name} temporarily removed from School Admin Panel.`);
+    triggerRefresh();
+  };
+
+  const handleExecutePermanentDelete = async () => {
+    if (!deleteModalTeacher) return;
+    const { id, name, email } = deleteModalTeacher;
+    setDeleteModalTeacher(null);
+    setShowPermanentConfirmation(false);
+
+    StorageService.deleteTeacherAccount(id, true);
+    await CloudSync.deleteTeacherFromSchool(activeSchoolCode, id, email, true).catch(() => {});
+
+    setRemoteTeachers(prev => prev.filter(t => t.id !== id && t.uid !== id));
+    showToast(`Teacher ${name} permanently deleted.`);
+    triggerRefresh();
   };
 
   // Timetable Handlers for Admin
@@ -5041,6 +5071,131 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* TWO-MODE TEACHER DELETION MODAL */}
+      {deleteModalTeacher && (
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-[#181B20] border border-[#2D3139] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 text-white">
+            
+            {!showPermanentConfirmation ? (
+              /* STEP 1: CHOICE DIALOG */
+              <>
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400">
+                    <UserX className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-bold text-white">Remove Teacher</h3>
+                    <p className="text-xs text-slate-400">
+                      How do you want to remove <strong className="text-amber-300">{deleteModalTeacher.name}</strong> from the School Admin Panel?
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 pt-2">
+                  {/* OPTION A: TEMPORARY DELETE / REMOVE */}
+                  <button
+                    type="button"
+                    onClick={handleExecuteTemporaryDelete}
+                    className="w-full text-left p-4 rounded-xl bg-[#0F1115] hover:bg-slate-800/80 border border-slate-700/60 hover:border-amber-500/50 transition group cursor-pointer space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-amber-300 group-hover:text-amber-200">
+                        A. Temporary Delete / Remove
+                      </span>
+                      <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        Re-entry Allowed
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Removes teacher from active School Admin list now. The teacher account remains valid and will automatically re-appear if the teacher logs in or signs up with the same valid school code in the future.
+                    </p>
+                  </button>
+
+                  {/* OPTION B: PERMANENT DELETE */}
+                  <button
+                    type="button"
+                    onClick={() => setShowPermanentConfirmation(true)}
+                    className="w-full text-left p-4 rounded-xl bg-[#0F1115] hover:bg-rose-950/30 border border-slate-700/60 hover:border-rose-500/50 transition group cursor-pointer space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-rose-400 group-hover:text-rose-300">
+                        B. Permanent Delete
+                      </span>
+                      <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                        Irreversible
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Permanently deletes teacher record and revokes school membership. The teacher will be permanently blocked from re-entering this school.
+                    </p>
+                  </button>
+                </div>
+
+                <div className="flex justify-end pt-3 border-t border-[#2D3139]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteModalTeacher(null);
+                      setShowPermanentConfirmation(false);
+                    }}
+                    className="px-5 py-2 rounded-xl bg-[#0F1115] hover:bg-slate-800 text-slate-400 hover:text-white text-xs font-bold transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              /* STEP 2: STRONG PERMANENT CONFIRMATION DIALOG */
+              <>
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center shrink-0 text-rose-500">
+                    <AlertOctagon className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-bold text-rose-400">Confirm Permanent Deletion</h3>
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      Are you sure you want to <strong className="text-rose-300 underline">PERMANENTLY DELETE</strong> teacher <strong className="text-white">{deleteModalTeacher.name}</strong>?
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-rose-950/20 border border-rose-500/30 space-y-2 text-xs text-slate-300">
+                  <div className="font-bold text-rose-300 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>Permanent Deletion Warning</span>
+                  </div>
+                  <ul className="list-disc list-inside space-y-1 text-[#C5C9D3]">
+                    <li>This will permanently remove all school membership records for <strong>{deleteModalTeacher.name}</strong>.</li>
+                    <li>The teacher will no longer be allowed automatic re-entry to this school.</li>
+                    <li>This action cannot be undone.</li>
+                  </ul>
+                </div>
+
+                <div className="flex items-center justify-between pt-4 border-t border-[#2D3139]">
+                  <button
+                    type="button"
+                    onClick={() => setShowPermanentConfirmation(false)}
+                    className="px-4 py-2 rounded-xl bg-[#0F1115] hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-bold transition cursor-pointer"
+                  >
+                    ← Go Back / Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExecutePermanentDelete}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white text-xs font-black transition shadow-lg shadow-rose-950/50 flex items-center gap-2 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Yes, Permanently Delete Teacher</span>
+                  </button>
+                </div>
+              </>
+            )}
+
           </div>
         </div>
       )}

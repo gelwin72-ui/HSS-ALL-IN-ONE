@@ -781,13 +781,23 @@ class CloudSyncManager {
     const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
     const cleanGmail = (teacher.gmail || teacher.email || '').trim().toLowerCase();
 
+    // Check if permanently deleted by School Admin
+    if (StorageService.isTeacherPermanentlyDeleted(teacher.id, cleanGmail) || (teacher.uid && StorageService.isTeacherPermanentlyDeleted(teacher.uid))) {
+      console.log('Teacher is permanently deleted for this school; ignoring re-entry save');
+      return false;
+    }
+
+    // Clear temporary deletion status from local storage
+    StorageService.removeTemporarilyDeletedTeacherId(teacher.id, cleanGmail);
+    if (teacher.uid) StorageService.removeTemporarilyDeletedTeacherId(teacher.uid);
+
     const sanitizedTeacherRecord = {
       id: teacher.id,
       uid: teacher.uid || teacher.id,
       name: teacher.name,
       gmail: cleanGmail,
       email: cleanGmail,
-      status: teacher.status || 'active',
+      status: 'active',
       dob: teacher.dob || '',
       phone: teacher.phone || '',
       schoolName: teacher.schoolName || "St. Sebastian's Higher Secondary School",
@@ -811,11 +821,26 @@ class CloudSyncManager {
 
     if (database) {
       try {
-        // 1. Write to new dedicated teachers/ collection in Realtime Database
+        // Clear deleted flags in RTDB
+        const tempDeletedRef = ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${teacher.id}`);
+        await remove(tempDeletedRef).catch(() => {});
+        const deletedTeacherRef = ref(database, `schools/${cleanCode}/deletedTeachers/${teacher.id}`);
+        await remove(deletedTeacherRef).catch(() => {});
+        if (teacher.uid) {
+          const deletedTeacherUidRef = ref(database, `schools/${cleanCode}/deletedTeachers/${teacher.uid}`);
+          await remove(deletedTeacherUidRef).catch(() => {});
+        }
+        if (cleanGmail) {
+          const sanitizedEmail = this.sanitizeEmailKey(cleanGmail);
+          const deletedEmailRef = ref(database, `schools/${cleanCode}/deletedTeacherEmails/${sanitizedEmail}`);
+          await remove(deletedEmailRef).catch(() => {});
+        }
+
+        // 1. Write to dedicated teachers/ collection in Realtime Database
         const dedicatedTeacherRef = ref(database, `teachers/${teacher.id}`);
         await update(dedicatedTeacherRef, sanitizedTeacherRecord);
 
-        // 2. Also write to schools/{schoolCode}/teachers/{teacher.id} for scoped Admin Panel listeners
+        // 2. Write to schools/{schoolCode}/teachers/{teacher.id} for active Admin Panel list
         const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${teacher.id}`);
         await update(schoolTeacherRef, sanitizedTeacherRecord);
       } catch (err) {
@@ -825,6 +850,14 @@ class CloudSyncManager {
 
     if (firestore) {
       try {
+        // Clear deleted flag in Firestore
+        const deletedDocRef = fsDoc(firestore, `schools/${cleanCode}/deletedTeachers/${teacher.id}`);
+        await fsDeleteDoc(deletedDocRef).catch(() => {});
+        if (teacher.uid) {
+          const deletedUidDocRef = fsDoc(firestore, `schools/${cleanCode}/deletedTeachers/${teacher.uid}`);
+          await fsDeleteDoc(deletedUidDocRef).catch(() => {});
+        }
+
         const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${teacher.id}`);
         await fsSetDoc(teacherDocRef, sanitizedTeacherRecord, { merge: true });
         const userDocRef = fsDoc(firestore, `users/${teacher.id}`);
@@ -837,14 +870,50 @@ class CloudSyncManager {
     return true;
   }
 
-  public async deleteTeacherFromSchool(schoolCode: string, teacherId: string, teacherEmail?: string): Promise<boolean> {
+  public async temporaryDeleteTeacherFromSchool(schoolCode: string, teacherId: string, teacherEmail?: string): Promise<boolean> {
+    if (!schoolCode || !teacherId) return false;
+    const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
+    const cleanEmail = (teacherEmail || '').trim().toLowerCase();
+
+    // Track temporary delete in local storage
+    StorageService.addTemporarilyDeletedTeacherId(teacherId, cleanEmail);
+
+    if (database) {
+      try {
+        // Remove from active school teacher list
+        const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${teacherId}`);
+        await remove(schoolTeacherRef);
+
+        // Mark temporary deletion in RTDB
+        const tempDeletedRef = ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${teacherId}`);
+        await set(tempDeletedRef, { temporarilyDeleted: true, deletedAt: new Date().toISOString() });
+      } catch (err) {
+        console.warn('Error temporarily deleting teacher in RTDB:', err);
+      }
+    }
+
+    if (firestore) {
+      try {
+        const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${teacherId}`);
+        await fsDeleteDoc(teacherDocRef);
+        const tempDeletedDocRef = fsDoc(firestore, `schools/${cleanCode}/temporarilyDeletedTeachers/${teacherId}`);
+        await fsSetDoc(tempDeletedDocRef, { temporarilyDeleted: true, deletedAt: new Date().toISOString() });
+      } catch (fsErr) {
+        console.warn('Firestore temporaryDeleteTeacherFromSchool warning:', fsErr);
+      }
+    }
+
+    return true;
+  }
+
+  public async permanentDeleteTeacherFromSchool(schoolCode: string, teacherId: string, teacherEmail?: string): Promise<boolean> {
     if (!schoolCode || !teacherId) return false;
     const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
     const cleanEmail = (teacherEmail || '').trim().toLowerCase();
     const sanitizedEmail = cleanEmail ? this.sanitizeEmailKey(cleanEmail) : '';
 
-    // Mark as deleted locally
-    StorageService.addDeletedTeacherId(teacherId, cleanEmail);
+    // Track permanent delete in local storage
+    StorageService.addPermanentlyDeletedTeacherId(teacherId, cleanEmail);
 
     if (database) {
       try {
@@ -856,6 +925,9 @@ class CloudSyncManager {
 
         const userRefPath = ref(database, `users/${teacherId}`);
         await remove(userRefPath);
+
+        const permDeletedRef = ref(database, `schools/${cleanCode}/permanentlyDeletedTeachers/${teacherId}`);
+        await set(permDeletedRef, true);
 
         const deletedTeacherRef = ref(database, `schools/${cleanCode}/deletedTeachers/${teacherId}`);
         await set(deletedTeacherRef, true);
@@ -871,7 +943,7 @@ class CloudSyncManager {
           await remove(gmailPasswordRef);
         }
       } catch (err) {
-        console.warn('Error deleting teacher from RTDB:', err);
+        console.warn('Error permanently deleting teacher from RTDB:', err);
       }
     }
 
@@ -881,14 +953,29 @@ class CloudSyncManager {
         await fsDeleteDoc(teacherDocRef);
         const userDocRef = fsDoc(firestore, `users/${teacherId}`);
         await fsDeleteDoc(userDocRef);
+        const permDeletedDocRef = fsDoc(firestore, `schools/${cleanCode}/permanentlyDeletedTeachers/${teacherId}`);
+        await fsSetDoc(permDeletedDocRef, { permanentlyDeleted: true, deletedAt: new Date().toISOString() });
         const deletedTeacherDocRef = fsDoc(firestore, `schools/${cleanCode}/deletedTeachers/${teacherId}`);
         await fsSetDoc(deletedTeacherDocRef, { deleted: true, deletedAt: new Date().toISOString() });
       } catch (fsErr) {
-        console.warn('Firestore deleteTeacherFromSchool warning:', fsErr);
+        console.warn('Firestore permanentDeleteTeacherFromSchool warning:', fsErr);
       }
     }
 
     return true;
+  }
+
+  public async deleteTeacherFromSchool(
+    schoolCode: string,
+    teacherId: string,
+    teacherEmail?: string,
+    isPermanent: boolean = true
+  ): Promise<boolean> {
+    if (isPermanent) {
+      return this.permanentDeleteTeacherFromSchool(schoolCode, teacherId, teacherEmail);
+    } else {
+      return this.temporaryDeleteTeacherFromSchool(schoolCode, teacherId, teacherEmail);
+    }
   }
 
   public async saveClassToSchool(schoolCode: string, classItem: ClassItem, students?: Student[]): Promise<boolean> {

@@ -587,6 +587,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         return;
       }
 
+      // Clear local deleted teacher flags if present
+      StorageService.removeDeletedTeacherId(match.id, match.email || match.gmail);
+      if (match.uid) StorageService.removeDeletedTeacherId(match.uid);
+
       // Check account status
       if (match.status && match.status !== 'active') {
         setErrorMsg('Access Denied: Your teacher account status is inactive or suspended.');

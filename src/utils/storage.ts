@@ -759,9 +759,10 @@ export const StorageService = {
     notifyMutation();
   },
 
-  getDeletedTeacherIds(): string[] {
+  // Permanent Deletion Tracking
+  getPermanentlyDeletedTeacherIds(): string[] {
     try {
-      const val = localStorage.getItem('hss_deleted_teacher_ids_v1');
+      const val = localStorage.getItem('hss_permanently_deleted_teacher_ids_v1') || localStorage.getItem('hss_deleted_teacher_ids_v1');
       if (val) {
         const parsed = JSON.parse(val);
         if (Array.isArray(parsed)) return parsed;
@@ -772,9 +773,9 @@ export const StorageService = {
     }
   },
 
-  addDeletedTeacherId(id: string, email?: string) {
+  addPermanentlyDeletedTeacherId(id: string, email?: string) {
     if (!id && !email) return;
-    const deleted = this.getDeletedTeacherIds();
+    const deleted = this.getPermanentlyDeletedTeacherIds();
     const cleanEmail = (email || '').trim().toLowerCase();
     
     if (id && !deleted.includes(id)) {
@@ -783,12 +784,34 @@ export const StorageService = {
     if (cleanEmail && !deleted.includes(cleanEmail)) {
       deleted.push(cleanEmail);
     }
+    localStorage.setItem('hss_permanently_deleted_teacher_ids_v1', JSON.stringify(deleted));
+    localStorage.setItem('hss_deleted_teacher_ids_v1', JSON.stringify(deleted));
+    // Ensure it's removed from temporary deleted list if present
+    this.removeTemporarilyDeletedTeacherId(id, email);
+    notifyMutation();
+  },
+
+  removePermanentlyDeletedTeacherId(id?: string, email?: string) {
+    if (!id && !email) return;
+    let deleted = this.getPermanentlyDeletedTeacherIds();
+    if (deleted.length === 0) return;
+    const cleanId = (id || '').trim().toLowerCase();
+    const cleanEmail = (email || '').trim().toLowerCase();
+
+    deleted = deleted.filter(item => {
+      const cleanItem = (item || '').trim().toLowerCase();
+      if (cleanId && cleanItem === cleanId) return false;
+      if (cleanEmail && cleanItem === cleanEmail) return false;
+      return true;
+    });
+
+    localStorage.setItem('hss_permanently_deleted_teacher_ids_v1', JSON.stringify(deleted));
     localStorage.setItem('hss_deleted_teacher_ids_v1', JSON.stringify(deleted));
     notifyMutation();
   },
 
-  isTeacherDeleted(id?: string, email?: string): boolean {
-    const deleted = this.getDeletedTeacherIds();
+  isTeacherPermanentlyDeleted(id?: string, email?: string): boolean {
+    const deleted = this.getPermanentlyDeletedTeacherIds();
     if (deleted.length === 0) return false;
     const cleanId = (id || '').trim();
     const cleanEmail = (email || '').trim().toLowerCase();
@@ -796,6 +819,82 @@ export const StorageService = {
     if (cleanId && deleted.includes(cleanId)) return true;
     if (cleanEmail && deleted.includes(cleanEmail)) return true;
     return false;
+  },
+
+  // Temporary Deletion Tracking
+  getTemporarilyDeletedTeacherIds(): string[] {
+    try {
+      const val = localStorage.getItem('hss_temp_deleted_teacher_ids_v1');
+      if (val) {
+        const parsed = JSON.parse(val);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  },
+
+  addTemporarilyDeletedTeacherId(id: string, email?: string) {
+    if (!id && !email) return;
+    const tempDeleted = this.getTemporarilyDeletedTeacherIds();
+    const cleanEmail = (email || '').trim().toLowerCase();
+
+    if (id && !tempDeleted.includes(id)) {
+      tempDeleted.push(id);
+    }
+    if (cleanEmail && !tempDeleted.includes(cleanEmail)) {
+      tempDeleted.push(cleanEmail);
+    }
+    localStorage.setItem('hss_temp_deleted_teacher_ids_v1', JSON.stringify(tempDeleted));
+    notifyMutation();
+  },
+
+  removeTemporarilyDeletedTeacherId(id?: string, email?: string) {
+    if (!id && !email) return;
+    let tempDeleted = this.getTemporarilyDeletedTeacherIds();
+    if (tempDeleted.length === 0) return;
+    const cleanId = (id || '').trim().toLowerCase();
+    const cleanEmail = (email || '').trim().toLowerCase();
+
+    tempDeleted = tempDeleted.filter(item => {
+      const cleanItem = (item || '').trim().toLowerCase();
+      if (cleanId && cleanItem === cleanId) return false;
+      if (cleanEmail && cleanItem === cleanEmail) return false;
+      return true;
+    });
+
+    localStorage.setItem('hss_temp_deleted_teacher_ids_v1', JSON.stringify(tempDeleted));
+    notifyMutation();
+  },
+
+  isTeacherTemporarilyDeleted(id?: string, email?: string): boolean {
+    const tempDeleted = this.getTemporarilyDeletedTeacherIds();
+    if (tempDeleted.length === 0) return false;
+    const cleanId = (id || '').trim();
+    const cleanEmail = (email || '').trim().toLowerCase();
+    
+    if (cleanId && tempDeleted.includes(cleanId)) return true;
+    if (cleanEmail && tempDeleted.includes(cleanEmail)) return true;
+    return false;
+  },
+
+  // Combined Check for Active Filtering
+  getDeletedTeacherIds(): string[] {
+    return Array.from(new Set([...this.getPermanentlyDeletedTeacherIds(), ...this.getTemporarilyDeletedTeacherIds()]));
+  },
+
+  addDeletedTeacherId(id: string, email?: string) {
+    this.addPermanentlyDeletedTeacherId(id, email);
+  },
+
+  removeDeletedTeacherId(id?: string, email?: string) {
+    this.removePermanentlyDeletedTeacherId(id, email);
+    this.removeTemporarilyDeletedTeacherId(id, email);
+  },
+
+  isTeacherDeleted(id?: string, email?: string): boolean {
+    return this.isTeacherPermanentlyDeleted(id, email) || this.isTeacherTemporarilyDeleted(id, email);
   },
 
   getTeacherAccounts(): TeacherAccount[] {
@@ -820,22 +919,29 @@ export const StorageService = {
   },
 
   registerTeacherAccount(account: TeacherAccount): boolean {
+    if (account) {
+      if (this.isTeacherPermanentlyDeleted(account.id, account.email || account.gmail) || (account.uid && this.isTeacherPermanentlyDeleted(account.uid))) {
+        return false;
+      }
+      this.removeTemporarilyDeletedTeacherId(account.id, account.email || account.gmail);
+      if (account.uid) this.removeTemporarilyDeletedTeacherId(account.uid);
+    }
     const accounts = this.getTeacherAccounts();
     const existing = accounts.find(
-      a => (a.email && a.email.toLowerCase() === account.email.toLowerCase()) || 
-           (a.phone && a.phone === account.phone)
+      a => (a.email && account.email && a.email.toLowerCase() === account.email.toLowerCase()) || 
+           (a.phone && account.phone && a.phone === account.phone)
     );
     if (existing) {
       // Update existing if needed
       const idx = accounts.findIndex(a => a.id === existing.id || (a.email && account.email && a.email.toLowerCase() === account.email.toLowerCase()));
       if (idx >= 0) {
-        accounts[idx] = { ...accounts[idx], ...account };
+        accounts[idx] = { ...accounts[idx], ...account, status: 'active' };
         this.saveTeacherAccounts(accounts);
         return true;
       }
       return false;
     }
-    accounts.push(account);
+    accounts.push({ ...account, status: 'active' });
     this.saveTeacherAccounts(accounts);
     return true;
   },
@@ -850,12 +956,20 @@ export const StorageService = {
   },
 
   updateTeacherAccount(account: TeacherAccount): boolean {
+    if (account) {
+      if (this.isTeacherPermanentlyDeleted(account.id, account.email || account.gmail) || (account.uid && this.isTeacherPermanentlyDeleted(account.uid))) {
+        return false;
+      }
+      this.removeTemporarilyDeletedTeacherId(account.id, account.email || account.gmail);
+      if (account.uid) this.removeTemporarilyDeletedTeacherId(account.uid);
+    }
     const accounts = this.getTeacherAccounts();
     const idx = accounts.findIndex(a => a.id === account.id);
     if (idx >= 0) {
       accounts[idx] = {
         ...accounts[idx],
         ...account,
+        status: 'active',
         lastActiveAt: new Date().toISOString()
       };
       this.saveTeacherAccounts(accounts);
@@ -888,7 +1002,7 @@ export const StorageService = {
     return false;
   },
 
-  deleteTeacherAccount(teacherId: string): boolean {
+  deleteTeacherAccount(teacherId: string, isPermanent: boolean = false): boolean {
     const rawVal = localStorage.getItem(STORAGE_KEYS.TEACHER_ACCOUNTS);
     let allAccounts: TeacherAccount[] = [];
     try {
@@ -896,24 +1010,29 @@ export const StorageService = {
     } catch (e) {}
 
     const target = allAccounts.find(a => a && (a.id === teacherId || a.uid === teacherId));
-    if (target) {
-      this.addDeletedTeacherId(target.id, target.email || target.gmail);
-      if (target.uid) this.addDeletedTeacherId(target.uid);
+    const targetEmail = target?.email || target?.gmail;
+
+    if (isPermanent) {
+      this.addPermanentlyDeletedTeacherId(teacherId, targetEmail);
+      if (target?.uid) this.addPermanentlyDeletedTeacherId(target.uid);
     } else {
-      this.addDeletedTeacherId(teacherId);
+      this.addTemporarilyDeletedTeacherId(teacherId, targetEmail);
+      if (target?.uid) this.addTemporarilyDeletedTeacherId(target.uid);
     }
 
     const remaining = allAccounts.filter(a => a && a.id !== teacherId && a.uid !== teacherId);
     localStorage.setItem(STORAGE_KEYS.TEACHER_ACCOUNTS, JSON.stringify(remaining));
 
-    const session = this.getAuthSession();
-    if (session.currentTeacher && (session.currentTeacher.id === teacherId || session.currentTeacher.uid === teacherId)) {
-      this.setAuthSession({
-        isLoggedIn: false,
-        role: 'teacher',
-        currentTeacher: null,
-        currentAdmin: null
-      });
+    if (isPermanent) {
+      const session = this.getAuthSession();
+      if (session.currentTeacher && (session.currentTeacher.id === teacherId || session.currentTeacher.uid === teacherId)) {
+        this.setAuthSession({
+          isLoggedIn: false,
+          role: 'teacher',
+          currentTeacher: null,
+          currentAdmin: null
+        });
+      }
     }
 
     notifyMutation();
@@ -921,6 +1040,13 @@ export const StorageService = {
   },
 
   addTeacherAccount(account: TeacherAccount): boolean {
+    if (account) {
+      if (this.isTeacherPermanentlyDeleted(account.id, account.email || account.gmail) || (account.uid && this.isTeacherPermanentlyDeleted(account.uid))) {
+        return false;
+      }
+      this.removeTemporarilyDeletedTeacherId(account.id, account.email || account.gmail);
+      if (account.uid) this.removeTemporarilyDeletedTeacherId(account.uid);
+    }
     const accounts = this.getTeacherAccounts();
     const existing = accounts.find(
       a => (a.email && account.email && a.email.toLowerCase() === account.email.toLowerCase()) ||
@@ -929,7 +1055,7 @@ export const StorageService = {
     if (existing) {
       return false;
     }
-    accounts.unshift(account);
+    accounts.unshift({ ...account, status: 'active' });
     this.saveTeacherAccounts(accounts);
     notifyMutation();
     return true;
