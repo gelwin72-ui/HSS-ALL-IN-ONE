@@ -119,7 +119,7 @@ export const TimetableScreen: React.FC<TimetableScreenProps> = ({
     if (viewMode === 'teacher-schedule') {
       slots = slots.filter(s => s.teacherId === activeTeacherId || s.teacherName === teacher.teacherName);
     } else if (viewMode === 'class-schedule') {
-      const targetClassName = classInfo.className?.trim().toLowerCase();
+      const targetClassName = (classInfo?.className || '').trim().toLowerCase();
       if (selectedClassFilter !== 'ALL') {
         slots = slots.filter(s => s.className?.toLowerCase() === selectedClassFilter.toLowerCase());
       } else if (targetClassName) {

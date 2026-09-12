@@ -387,16 +387,16 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       }
     });
     const all = Array.from(map.values());
-    const safeTeachers = Array.isArray(teachers) ? teachers : [];
+    const safeTeachers = Array.isArray(teachers) ? teachers.filter(Boolean) : [];
 
     return all.filter(c => {
       if (!c) return false;
       if (c.isTeacherCreated) return true;
-      if (c.createdByTeacherId && safeTeachers.some(t => t.id === c.createdByTeacherId)) return true;
-      if (c.createdByTeacherEmail && safeTeachers.some(t => t.email && t.email.toLowerCase() === c.createdByTeacherEmail?.toLowerCase())) return true;
-      if (c.teacherId && safeTeachers.some(t => t.id === c.teacherId)) return true;
-      if (safeTeachers.some(t => t.assignedClass && t.assignedClass.trim().toLowerCase() === c.className.trim().toLowerCase())) return true;
-      if (c.teacherName && safeTeachers.some(t => t.name.trim().toLowerCase() === c.teacherName?.trim().toLowerCase())) return true;
+      if (c.createdByTeacherId && safeTeachers.some(t => t && t.id === c.createdByTeacherId)) return true;
+      if (c.createdByTeacherEmail && safeTeachers.some(t => t && t.email && t.email.toLowerCase() === c.createdByTeacherEmail?.toLowerCase())) return true;
+      if (c.teacherId && safeTeachers.some(t => t && t.id === c.teacherId)) return true;
+      if (c.className && safeTeachers.some(t => t && t.assignedClass && (t.assignedClass || '').trim().toLowerCase() === (c.className || '').trim().toLowerCase())) return true;
+      if (c.teacherName && safeTeachers.some(t => t && t.name && (t.name || '').trim().toLowerCase() === (c.teacherName || '').trim().toLowerCase())) return true;
       return false;
     });
   }, [mutationCount, remoteClasses, teachers]);
