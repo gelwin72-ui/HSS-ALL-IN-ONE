@@ -634,3 +634,188 @@ function getMonthNumber(monthName: string): number {
   const idx = months.indexOf(monthName.toLowerCase());
   return idx !== -1 ? idx + 1 : new Date().getMonth() + 1;
 }
+
+export interface AttendancePDFOptions {
+  reportType: 'class' | 'individual';
+  selectedStudentId?: string;
+  fromDate?: string;
+  toDate?: string;
+  periodLabel?: string;
+}
+
+/**
+ * 5. COMPREHENSIVE ATTENDANCE HISTORY PDF
+ * Exports classroom or individual student attendance history with custom date ranges
+ */
+export function generateAttendanceHistoryPDF(
+  school: SchoolProfile,
+  classInfo: ClassInfo,
+  teacher: TeacherInfo,
+  students: Student[],
+  attendanceRecords: AttendanceRecord[],
+  options: AttendancePDFOptions
+): jsPDF {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  const { reportType, selectedStudentId, fromDate, toDate, periodLabel } = options;
+
+  // Filter records by date range if specified
+  const filteredRecords = attendanceRecords.filter(r => {
+    if (fromDate && r.date < fromDate) return false;
+    if (toDate && r.date > toDate) return false;
+    return true;
+  }).sort((a, b) => a.date.localeCompare(b.date));
+
+  const workingDays = filteredRecords.length;
+  const sortedStudents = [...students].sort((a, b) => a.rollNo - b.rollNo);
+
+  if (reportType === 'individual' && selectedStudentId) {
+    const student = students.find(s => s.id === selectedStudentId);
+    const studentName = student ? student.name : 'Student';
+    const rollNo = student ? student.rollNo : '-';
+
+    const startY = addHeader(
+      doc,
+      school,
+      classInfo,
+      teacher,
+      `INDIVIDUAL ATTENDANCE HISTORY REPORT`,
+      `Student: ${studentName.toUpperCase()} (Roll #${rollNo})  |  Period: ${periodLabel || 'All Time'}`
+    );
+
+    let presentDays = 0;
+    let absentDays = 0;
+
+    const dailyRows = filteredRecords.map(rec => {
+      const isPresent = rec.presentStudentIds?.includes(selectedStudentId);
+      const isAbsent = rec.absentStudentIds?.includes(selectedStudentId);
+
+      let status = 'PRESENT';
+      if (isAbsent) {
+        status = 'ABSENT';
+        absentDays++;
+      } else if (isPresent) {
+        presentDays++;
+      } else {
+        presentDays++;
+      }
+
+      const dateObj = new Date(rec.date);
+      const dayName = dateObj.toLocaleDateString('en-IN', { weekday: 'long' });
+      const formattedDate = dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+      return [formattedDate, dayName, status, rec.notes || '-'];
+    });
+
+    const attPct = workingDays > 0 ? ((presentDays / workingDays) * 100).toFixed(1) : '100';
+
+    doc.setFillColor(248, 250, 252);
+    doc.rect(14, startY + 2, pageWidth - 28, 14, 'F');
+    doc.setDrawColor(203, 213, 225);
+    doc.rect(14, startY + 2, pageWidth - 28, 14, 'S');
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...SECONDARY_COLOR);
+    doc.text(
+      `Working Days: ${workingDays}   •   Present: ${presentDays}   •   Absent: ${absentDays}   •   Attendance: ${attPct}%`,
+      18,
+      startY + 11
+    );
+
+    autoTable(doc, {
+      startY: startY + 20,
+      head: [['Date', 'Day of Week', 'Attendance Status', 'Teacher Remarks']],
+      body: dailyRows.length > 0 ? dailyRows : [['-', '-', 'No attendance records found', '-']],
+      theme: 'grid',
+      styles: { fontSize: 8.5, halign: 'center', cellPadding: 2.5 },
+      headStyles: { fillColor: PRIMARY_COLOR, textColor: [255, 255, 255], fontStyle: 'bold' },
+      columnStyles: { 0: { fontStyle: 'bold' }, 3: { halign: 'left' } },
+      didParseCell: function (data) {
+        if (data.section === 'body' && data.column.index === 2) {
+          if (data.cell.raw === 'ABSENT') {
+            data.cell.styles.textColor = [225, 29, 72];
+            data.cell.styles.fontStyle = 'bold';
+          } else if (data.cell.raw === 'PRESENT') {
+            data.cell.styles.textColor = [16, 185, 129];
+            data.cell.styles.fontStyle = 'bold';
+          }
+        }
+      },
+      margin: { left: 14, right: 14, bottom: 30 }
+    });
+
+    addFooter(doc, teacher, school.principalName);
+    return doc;
+  }
+
+  // Classroom-wide Attendance Report
+  const startY = addHeader(
+    doc,
+    school,
+    classInfo,
+    teacher,
+    `CLASSROOM ATTENDANCE HISTORY REPORT`,
+    `Period: ${periodLabel || `${fromDate || 'Beginning'} to ${toDate || 'Today'}`}  |  Total Working Days: ${workingDays}`
+  );
+
+  let totalClassPresents = 0;
+  let totalPossiblePresents = workingDays * sortedStudents.length;
+
+  const tableRows = sortedStudents.map(st => {
+    let p = 0;
+    let a = 0;
+
+    filteredRecords.forEach(rec => {
+      if (rec.presentStudentIds?.includes(st.id)) p++;
+      else if (rec.absentStudentIds?.includes(st.id)) a++;
+      else p++;
+    });
+
+    totalClassPresents += p;
+    const pct = workingDays > 0 ? Number(((p / workingDays) * 100).toFixed(1)) : 100;
+    const status = pct >= 85 ? 'Good' : pct >= 75 ? 'Satisfactory' : 'Shortage (<75%)';
+
+    return [
+      st.rollNo.toString(),
+      st.name,
+      workingDays.toString(),
+      p.toString(),
+      a.toString(),
+      `${pct}%`,
+      status
+    ];
+  });
+
+  const overallClassPct = totalPossiblePresents > 0 ? ((totalClassPresents / totalPossiblePresents) * 100).toFixed(1) : '100';
+
+  doc.setFillColor(241, 245, 249);
+  doc.rect(14, startY + 2, pageWidth - 28, 12, 'F');
+  doc.setDrawColor(203, 213, 225);
+  doc.rect(14, startY + 2, pageWidth - 28, 12, 'S');
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...SECONDARY_COLOR);
+  doc.text(
+    `Enrolled Students: ${students.length}   •   Total School Days: ${workingDays}   •   Average Class Attendance: ${overallClassPct}%`,
+    18,
+    startY + 10
+  );
+
+  autoTable(doc, {
+    startY: startY + 18,
+    head: [['R.No', 'Student Name', 'Total Days', 'Days Present', 'Days Absent', 'Attendance %', 'Status']],
+    body: tableRows.length > 0 ? tableRows : [['-', 'No students found', '0', '0', '0', '0%', '-']],
+    theme: 'grid',
+    styles: { fontSize: 8.5, halign: 'center', cellPadding: 2.5 },
+    headStyles: { fillColor: SECONDARY_COLOR, textColor: [255, 255, 255], fontStyle: 'bold' },
+    columnStyles: { 1: { halign: 'left', fontStyle: 'bold' } },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    margin: { left: 14, right: 14, bottom: 30 }
+  });
+
+  addFooter(doc, teacher, school.principalName);
+  return doc;
+}

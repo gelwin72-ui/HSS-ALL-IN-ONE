@@ -18,10 +18,11 @@ import {
   FileText,
   Clock,
   ArrowRight,
-  Check
+  Check,
+  X
 } from 'lucide-react';
 import { SchoolProfile, ClassInfo, TeacherInfo, Student, AttendanceRecord } from '../types';
-import { generateAbsentReportPDF, generateMonthlyAttendancePDF } from '../utils/pdfGenerator';
+import { generateAbsentReportPDF, generateMonthlyAttendancePDF, generateAttendanceHistoryPDF } from '../utils/pdfGenerator';
 import { shareTextContent } from '../utils/pdfGenerator';
 import { exportAttendanceToCSV } from '../utils/csvHelper';
 import { exportAttendanceToSVG, downloadSVGFile } from '../utils/svgHelper';
@@ -71,6 +72,67 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const [previewDoc, setPreviewDoc] = useState<jsPDF | null>(null);
   const [previewTitle, setPreviewTitle] = useState('');
   const [previewFilename, setPreviewFilename] = useState('');
+
+  // Attendance History Export Modal state
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportReportType, setExportReportType] = useState<'class' | 'individual'>('class');
+  const [exportStudentId, setExportStudentId] = useState<string>('');
+  const [exportRangePreset, setExportRangePreset] = useState<'all' | 'this_month' | 'last_month' | 'custom'>('all');
+  const [exportFromDate, setExportFromDate] = useState<string>('');
+  const [exportToDate, setExportToDate] = useState<string>('');
+
+  const handleGenerateCustomAttendancePDF = () => {
+    let fromD = exportFromDate;
+    let toD = exportToDate;
+    let periodLabel = 'All Time Recorded Days';
+
+    const today = new Date();
+
+    if (exportRangePreset === 'this_month') {
+      const y = today.getFullYear();
+      const m = String(today.getMonth() + 1).padStart(2, '0');
+      fromD = `${y}-${m}-01`;
+      toD = today.toISOString().split('T')[0];
+      periodLabel = `This Month (${fromD} to ${toD})`;
+    } else if (exportRangePreset === 'last_month') {
+      const prevMDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const lastDayPrevM = new Date(today.getFullYear(), today.getMonth(), 0);
+      fromD = prevMDate.toISOString().split('T')[0];
+      toD = lastDayPrevM.toISOString().split('T')[0];
+      periodLabel = `Previous Month (${fromD} to ${toD})`;
+    } else if (exportRangePreset === 'custom') {
+      periodLabel = `Custom Period (${fromD || 'Start'} to ${toD || 'End'})`;
+    }
+
+    const pdf = generateAttendanceHistoryPDF(
+      school,
+      classInfo,
+      teacher,
+      students,
+      attendanceRecords,
+      {
+        reportType: exportReportType,
+        selectedStudentId: exportStudentId || (students[0]?.id || ''),
+        fromDate: fromD,
+        toDate: toD,
+        periodLabel
+      }
+    );
+
+    const selStudent = students.find(s => s.id === exportStudentId);
+    const title = exportReportType === 'individual'
+      ? `Attendance History - ${selStudent ? selStudent.name : 'Student'}`
+      : `Classroom Attendance History Report`;
+
+    const filename = exportReportType === 'individual'
+      ? `${selStudent ? selStudent.name.replace(/\s+/g, '_') : 'Student'}_Attendance_History.pdf`
+      : `${classInfo.className.replace(/\s+/g, '_')}_Attendance_History.pdf`;
+
+    setPreviewTitle(title);
+    setPreviewFilename(filename);
+    setPreviewDoc(pdf);
+    setIsExportModalOpen(false);
+  };
 
   // Delete confirm dialog
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
@@ -631,6 +693,17 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
                 </p>
               </div>
             </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsExportModalOpen(true)}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-900/30 transition active:scale-95 flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                <span>EXPORT ATTENDANCE PDF</span>
+              </button>
+            </div>
           </div>
 
           {attendanceRecords.length === 0 ? (
@@ -804,6 +877,176 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         filename={previewFilename}
         onClose={() => setPreviewDoc(null)}
       />
+
+      {/* Attendance History Export Options Modal */}
+      {isExportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-lg rounded-3xl bg-[#1A1C23] border border-[#2D3139] shadow-2xl overflow-hidden text-slate-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#2D3139] bg-[#0F1115]">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400">
+                  <Download className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">EXPORT ATTENDANCE PDF</h3>
+                  <p className="text-xs text-slate-400">Configure report scope and date range</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsExportModalOpen(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-[#252830]"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5 text-xs sm:text-sm">
+              {/* Report Scope Selector */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-2">1. Select Report Target Scope</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExportReportType('class')}
+                    className={`p-3 rounded-xl border font-semibold text-center transition ${
+                      exportReportType === 'class'
+                        ? 'bg-purple-600/20 border-purple-500 text-purple-300 shadow-md'
+                        : 'bg-[#0F1115] border-[#2D3139] text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Classroom (All Students)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExportReportType('individual')}
+                    className={`p-3 rounded-xl border font-semibold text-center transition ${
+                      exportReportType === 'individual'
+                        ? 'bg-purple-600/20 border-purple-500 text-purple-300 shadow-md'
+                        : 'bg-[#0F1115] border-[#2D3139] text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Individual Student
+                  </button>
+                </div>
+              </div>
+
+              {/* Individual Student Picker if selected */}
+              {exportReportType === 'individual' && (
+                <div className="animate-fade-in">
+                  <label className="block text-xs font-bold text-slate-300 mb-1.5">Select Student</label>
+                  <select
+                    value={exportStudentId}
+                    onChange={e => setExportStudentId(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white focus:outline-none focus:border-purple-500 text-xs sm:text-sm font-semibold"
+                  >
+                    <option value="">-- Choose Student --</option>
+                    {sortedStudents.map(st => (
+                      <option key={st.id} value={st.id}>
+                        Roll #{st.rollNo} - {st.name} (Adm: {st.admissionNo})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Date Range Presets */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-2">2. Select Date Range</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setExportRangePreset('all')}
+                    className={`p-2.5 rounded-xl border font-semibold transition ${
+                      exportRangePreset === 'all'
+                        ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                        : 'bg-[#0F1115] border-[#2D3139] text-slate-400'
+                    }`}
+                  >
+                    Complete History
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExportRangePreset('this_month')}
+                    className={`p-2.5 rounded-xl border font-semibold transition ${
+                      exportRangePreset === 'this_month'
+                        ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                        : 'bg-[#0F1115] border-[#2D3139] text-slate-400'
+                    }`}
+                  >
+                    This Month
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExportRangePreset('last_month')}
+                    className={`p-2.5 rounded-xl border font-semibold transition ${
+                      exportRangePreset === 'last_month'
+                        ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                        : 'bg-[#0F1115] border-[#2D3139] text-slate-400'
+                    }`}
+                  >
+                    Last Month
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExportRangePreset('custom')}
+                    className={`p-2.5 rounded-xl border font-semibold transition ${
+                      exportRangePreset === 'custom'
+                        ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                        : 'bg-[#0F1115] border-[#2D3139] text-slate-400'
+                    }`}
+                  >
+                    Custom Dates
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom Date Pickers */}
+              {exportRangePreset === 'custom' && (
+                <div className="grid grid-cols-2 gap-3 animate-fade-in pt-1">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">From Date</label>
+                    <input
+                      type="date"
+                      value={exportFromDate}
+                      onChange={e => setExportFromDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white text-xs font-semibold focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1">To Date</label>
+                    <input
+                      type="date"
+                      value={exportToDate}
+                      onChange={e => setExportToDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white text-xs font-semibold focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#2D3139] bg-[#0F1115]">
+              <button
+                type="button"
+                onClick={() => setIsExportModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl bg-[#252830] hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleGenerateCustomAttendancePDF}
+                disabled={exportReportType === 'individual' && !exportStudentId}
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-blue-900/30 transition active:scale-95 disabled:opacity-50 flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                <span>GENERATE & PREVIEW PDF</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Record Confirmation Dialog */}
       <ConfirmDialog

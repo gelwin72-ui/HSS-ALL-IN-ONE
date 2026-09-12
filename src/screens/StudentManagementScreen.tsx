@@ -27,6 +27,7 @@ import {
 import { Student, Gender, AttendanceRecord, Exam, ExamMarksRecord, SchoolProfile, ClassInfo, TeacherInfo } from '../types';
 import { parseStudentsCSV, downloadSampleStudentCSV, exportStudentsToCSV, CSVParseResult } from '../utils/csvHelper';
 import { exportStudentsToSVG, parseStudentsSVG, downloadSVGFile } from '../utils/svgHelper';
+import { extractTextFromPDF, parseStudentsPDF } from '../utils/pdfHelper';
 import { calculateStudentAttendanceStats } from '../utils/calculations';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
@@ -92,10 +93,12 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
-  // File Import State (CSV / SVG)
+  // File Import State (PDF / CSV / SVG)
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const svgFileInputRef = useRef<HTMLInputElement | null>(null);
-  const [importedFileType, setImportedFileType] = useState<'csv' | 'svg'>('csv');
+  const pdfFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importedFileType, setImportedFileType] = useState<'csv' | 'svg' | 'pdf'>('csv');
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
   const [parseResult, setParseResult] = useState<CSVParseResult | null>(null);
   const [rawFileText, setRawFileText] = useState('');
   const [importReplaceAll, setImportReplaceAll] = useState(false);
@@ -232,6 +235,33 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
       setParseResult(result);
     };
     reader.readAsText(file);
+  };
+
+  const handlePDFFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportedFileType('pdf');
+    setIsPdfLoading(true);
+    setFormError(null);
+
+    try {
+      const rawLines = await extractTextFromPDF(file);
+      const existingRolls = importReplaceAll ? [] : students.map(s => s.rollNo);
+      const existingAdms = importReplaceAll ? [] : students.map(s => s.admissionNo);
+      const result = parseStudentsPDF(rawLines, existingRolls, existingAdms);
+
+      setParseResult(result as any);
+      if (result.validStudents.length === 0) {
+        setFormError('No valid student entries could be extracted from this PDF file.');
+      }
+    } catch (err: any) {
+      console.error('PDF Parse Error:', err);
+      setFormError('Failed to read PDF document. Please verify the PDF contains readable student text.');
+    } finally {
+      setIsPdfLoading(false);
+      if (pdfFileInputRef.current) pdfFileInputRef.current.value = '';
+    }
   };
 
   const handleExportStudentsSVG = () => {
@@ -847,18 +877,18 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
         </div>
       )}
 
-      {/* TAB 3: IMPORT STUDENTS (SVG / CSV / DOCUMENTS) */}
+      {/* TAB 3: IMPORT STUDENTS (PDF / SVG / CSV) */}
       {activeTab === 'import' && (
         <div className="rounded-3xl bg-[#1A1C23] border border-[#2D3139] p-5 sm:p-7 shadow-2xl space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#2D3139]">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-2xl bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              <div className="p-2.5 rounded-2xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
                 <Upload className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-white">IMPORT STUDENTS FROM SVG / CSV</h2>
+                <h2 className="text-base font-bold text-white">IMPORT STUDENTS FROM PDF / SVG / CSV</h2>
                 <p className="text-xs text-slate-400">
-                  Import class roster from vector SVG registers (.svg) or spreadsheets (.csv)
+                  Import class roster from PDF documents (.pdf), vector registers (.svg) or spreadsheets (.csv)
                 </p>
               </div>
             </div>
@@ -881,10 +911,46 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
             </div>
           )}
 
-          {/* Dual Upload Cards: Import SVG & Import CSV */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* 1. SVG Import Card */}
-            <div className="border-2 border-dashed border-purple-500/30 hover:border-purple-500 rounded-3xl p-6 text-center bg-[#0F1115] transition flex flex-col items-center justify-between">
+          {formError && (
+            <div className="p-4 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-rose-300 flex items-center gap-3 text-sm animate-fade-in">
+              <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
+
+          {/* Triple Upload Cards: PDF, SVG & CSV */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* 1. PDF Import Card */}
+            <div className="border-2 border-dashed border-rose-500/40 hover:border-rose-500 rounded-3xl p-5 text-center bg-[#0F1115] transition flex flex-col items-center justify-between">
+              <input
+                type="file"
+                ref={pdfFileInputRef}
+                accept=".pdf,application/pdf"
+                onChange={handlePDFFileUpload}
+                className="hidden"
+              />
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-400 flex items-center justify-center mb-3">
+                <FileText className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white">IMPORT PDF DOCUMENT</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Upload a PDF student register or class list. Text & tables are automatically parsed and previewed.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isPdfLoading}
+                onClick={() => pdfFileInputRef.current?.click()}
+                className="mt-4 px-4 py-2.5 w-full rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white font-bold text-xs shadow-lg shadow-rose-950/40 transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                <FileText className="w-4 h-4" />
+                <span>{isPdfLoading ? 'Parsing PDF...' : 'Upload & Parse PDF'}</span>
+              </button>
+            </div>
+
+            {/* 2. SVG Import Card */}
+            <div className="border-2 border-dashed border-purple-500/30 hover:border-purple-500 rounded-3xl p-5 text-center bg-[#0F1115] transition flex flex-col items-center justify-between">
               <input
                 type="file"
                 ref={svgFileInputRef}
@@ -896,23 +962,23 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
                 <FileCode className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">IMPORT SVG FILE</h3>
-                <p className="text-xs text-slate-400 mt-1 max-w-xs">
-                  Upload an SVG student roster or exported SVG register. All student info & contact columns will be extracted step-by-step.
+                <h3 className="text-sm font-bold text-white">IMPORT SVG REGISTER</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Upload an SVG student roster or exported register with full student contact & admission columns.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => svgFileInputRef.current?.click()}
-                className="mt-4 px-5 py-2.5 w-full rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-900/30 transition active:scale-95 flex items-center justify-center gap-2"
+                className="mt-4 px-4 py-2.5 w-full rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-900/30 transition active:scale-95 flex items-center justify-center gap-2"
               >
                 <FileCode className="w-4 h-4" />
                 <span>Upload & Parse SVG</span>
               </button>
             </div>
 
-            {/* 2. CSV Import Card */}
-            <div className="border-2 border-dashed border-blue-500/30 hover:border-blue-500 rounded-3xl p-6 text-center bg-[#0F1115] transition flex flex-col items-center justify-between">
+            {/* 3. CSV Import Card */}
+            <div className="border-2 border-dashed border-blue-500/30 hover:border-blue-500 rounded-3xl p-5 text-center bg-[#0F1115] transition flex flex-col items-center justify-between">
               <input
                 type="file"
                 ref={fileInputRef}
@@ -925,14 +991,14 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
               </div>
               <div>
                 <h3 className="text-sm font-bold text-white">IMPORT CSV FILE</h3>
-                <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                <p className="text-xs text-slate-400 mt-1">
                   Upload a standard spreadsheet (.csv) containing columns for Roll No, Name, Phone, and Parent details.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="mt-4 px-5 py-2.5 w-full rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-900/30 transition active:scale-95 flex items-center justify-center gap-2"
+                className="mt-4 px-4 py-2.5 w-full rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs shadow-lg shadow-blue-900/30 transition active:scale-95 flex items-center justify-center gap-2"
               >
                 <FileSpreadsheet className="w-4 h-4" />
                 <span>Upload & Parse CSV</span>

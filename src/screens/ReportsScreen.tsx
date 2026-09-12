@@ -27,7 +27,8 @@ import {
   generateExamReportPDF,
   generateMonthlyAttendancePDF,
   generateStudentProgressReportPDF,
-  generateAbsentReportPDF
+  generateAbsentReportPDF,
+  generateAttendanceHistoryPDF
 } from '../utils/pdfGenerator';
 import { PDFPreviewModal } from '../components/PDFPreviewModal';
 import jsPDF from 'jspdf';
@@ -95,6 +96,18 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
     setPreviewTitle(`Class Monthly Attendance Report - ${selectedMonthName} ${selectedYear}`);
     const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
     setPreviewFilename(`${safeClassName}_Attendance_${selectedMonthName}_${selectedYear}.pdf`);
+  };
+
+  // 3b. Export Complete Class Attendance History PDF
+  const handleExportAttendanceHistory = () => {
+    const doc = generateAttendanceHistoryPDF(school, classInfo, teacher, students, attendance, {
+      reportType: 'class',
+      periodLabel: 'Complete Recorded Attendance History'
+    });
+    setPreviewDoc(doc);
+    setPreviewTitle(`Complete Attendance History Report`);
+    const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
+    setPreviewFilename(`${safeClassName}_Complete_Attendance_History.pdf`);
   };
 
   // 4. Export Individual Student Performance Report PDF
@@ -243,10 +256,18 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
             <button
               type="button"
               onClick={handleExportMonthlyAttendance}
-              className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-emerald-900/30 transition active:scale-95 flex items-center justify-center gap-2"
+              className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-emerald-900/30 transition active:scale-95 flex items-center justify-center gap-2"
             >
               <Download className="w-4 h-4" />
               <span>EXPORT MONTHLY ATTENDANCE PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportAttendanceHistory}
+              className="w-full py-2.5 rounded-xl bg-[#0F1115] hover:bg-[#252830] text-emerald-300 border border-emerald-500/30 font-bold text-xs transition active:scale-95 flex items-center justify-center gap-2"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>EXPORT FULL ATTENDANCE HISTORY PDF</span>
             </button>
           </div>
         </div>
