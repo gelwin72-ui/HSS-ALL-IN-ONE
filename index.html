@@ -20,9 +20,15 @@
     <script>
       window.OneSignalDeferred = window.OneSignalDeferred || [];
       OneSignalDeferred.push(async function(OneSignal) {
-        await OneSignal.init({
-          appId: "e408c264-cc29-4f91-809f-1e5effc2b43d",
-        });
+        try {
+          await OneSignal.init({
+            appId: "e408c264-cc29-4f91-809f-1e5effc2b43d",
+            allowLocalhostAsSecureOrigin: true,
+          });
+        } catch (err) {
+          // Gracefully handle origin restrictions when accessed from dev preview URLs or non-configured domains
+          console.warn("[OneSignal] Initialization note for current origin:", err);
+        }
       });
     </script>
   </head>

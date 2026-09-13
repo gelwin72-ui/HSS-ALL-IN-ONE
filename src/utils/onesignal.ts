@@ -30,23 +30,32 @@ export async function initOneSignal(): Promise<boolean> {
       console.log('[OneSignal] Initialized successfully with App ID:', ONESIGNAL_APP_ID, 'SW Path:', swPath);
 
       // Register listener for foreground notifications
-      OneSignal.Notifications.addEventListener('foregroundWillDisplay', (event) => {
-        console.log('[OneSignal] Foreground notification received:', event);
-      });
+      try {
+        OneSignal.Notifications?.addEventListener('foregroundWillDisplay', (event: any) => {
+          console.log('[OneSignal] Foreground notification received:', event);
+        });
+      } catch (e) {
+        // ignore listener attach error
+      }
 
       // Register listener for notification clicks
-      OneSignal.Notifications.addEventListener('click', (event) => {
-        console.log('[OneSignal] Notification clicked:', event);
-        try {
-          if (window.focus) window.focus();
-        } catch (e) {
-          // ignore window focus error
-        }
-      });
+      try {
+        OneSignal.Notifications?.addEventListener('click', (event: any) => {
+          console.log('[OneSignal] Notification clicked:', event);
+          try {
+            if (window.focus) window.focus();
+          } catch (e) {
+            // ignore window focus error
+          }
+        });
+      } catch (e) {
+        // ignore listener attach error
+      }
 
       return true;
-    } catch (error) {
-      console.warn('[OneSignal] Initialization error (may be offline or blocked):', error);
+    } catch (error: any) {
+      // Gracefully handle domain restrictions (e.g. App ID restricted to https://gelwin72-ui.github.io during dev preview)
+      console.warn('[OneSignal] Initialization note (origin restriction or offline):', error?.message || error);
       return false;
     }
   })();
