@@ -20,8 +20,7 @@ import {
   fsQuery,
   fsWhere,
   fsGetDocs,
-  fsOnSnapshot,
-  storeCredentialsInRTDB
+  fsOnSnapshot
 } from './firebase';
 import {
   SchoolProfile,
@@ -777,12 +776,16 @@ class CloudSyncManager {
   }
 
   public async saveTeacherToSchool(schoolCode: string, teacher: TeacherAccount): Promise<boolean> {
-    if (!schoolCode || !teacher || !teacher.id) return false;
+    if (!schoolCode || !teacher) return false;
     const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
     const cleanGmail = (teacher.gmail || teacher.email || '').trim().toLowerCase();
+    const effectiveTeacherKey = (teacher.uid || teacher.id || '').trim();
+
+    if (!effectiveTeacherKey) return false;
 
     // Check if permanently deleted by School Admin
-    if (StorageService.isTeacherPermanentlyDeleted(teacher.id, cleanGmail) || (teacher.uid && StorageService.isTeacherPermanentlyDeleted(teacher.uid))) {
+    const isPermDeleted = await this.isTeacherPermanentlyDeletedForSchool(cleanCode, effectiveTeacherKey, cleanGmail);
+    if (isPermDeleted) {
       console.log('Teacher is permanently deleted for this school; ignoring re-entry save');
       return false;
     }
@@ -790,14 +793,16 @@ class CloudSyncManager {
     // Clear temporary deletion status from local storage
     StorageService.removeTemporarilyDeletedTeacherId(teacher.id, cleanGmail);
     if (teacher.uid) StorageService.removeTemporarilyDeletedTeacherId(teacher.uid);
+    if (effectiveTeacherKey) StorageService.removeTemporarilyDeletedTeacherId(effectiveTeacherKey);
 
     const sanitizedTeacherRecord = {
-      id: teacher.id,
-      uid: teacher.uid || teacher.id,
+      id: effectiveTeacherKey,
+      uid: effectiveTeacherKey,
       name: teacher.name,
       gmail: cleanGmail,
       email: cleanGmail,
       status: 'active',
+      academicYear: teacher.academicYear || '',
       dob: teacher.dob || '',
       phone: teacher.phone || '',
       schoolName: teacher.schoolName || "St. Sebastian's Higher Secondary School",
@@ -821,27 +826,39 @@ class CloudSyncManager {
 
     if (database) {
       try {
-        // Clear deleted flags in RTDB
-        const tempDeletedRef = ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${teacher.id}`);
-        await remove(tempDeletedRef).catch(() => {});
-        const deletedTeacherRef = ref(database, `schools/${cleanCode}/deletedTeachers/${teacher.id}`);
-        await remove(deletedTeacherRef).catch(() => {});
-        if (teacher.uid) {
-          const deletedTeacherUidRef = ref(database, `schools/${cleanCode}/deletedTeachers/${teacher.uid}`);
-          await remove(deletedTeacherUidRef).catch(() => {});
+        // Clear temporary deletion flags in RTDB
+        await remove(ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${effectiveTeacherKey}`)).catch(() => {});
+        if (teacher.id && teacher.id !== effectiveTeacherKey) {
+          await remove(ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${teacher.id}`)).catch(() => {});
         }
+
+        // Clean up legacy deleted flags if any
+        await remove(ref(database, `schools/${cleanCode}/deletedTeachers/${effectiveTeacherKey}`)).catch(() => {});
+        if (teacher.id && teacher.id !== effectiveTeacherKey) {
+          await remove(ref(database, `schools/${cleanCode}/deletedTeachers/${teacher.id}`)).catch(() => {});
+        }
+
+        // Remove duplicate records for same cleanGmail under different keys in schools/{schoolCode}/teachers
         if (cleanGmail) {
-          const sanitizedEmail = this.sanitizeEmailKey(cleanGmail);
-          const deletedEmailRef = ref(database, `schools/${cleanCode}/deletedTeacherEmails/${sanitizedEmail}`);
-          await remove(deletedEmailRef).catch(() => {});
+          const allSnap = await get(ref(database, `schools/${cleanCode}/teachers`)).catch(() => null);
+          if (allSnap && allSnap.exists()) {
+            allSnap.forEach(child => {
+              if (child.key !== effectiveTeacherKey) {
+                const val = child.val();
+                if (val && ((val.email && val.email.toLowerCase() === cleanGmail) || (val.gmail && val.gmail.toLowerCase() === cleanGmail))) {
+                  remove(ref(database, `schools/${cleanCode}/teachers/${child.key}`)).catch(() => {});
+                }
+              }
+            });
+          }
         }
 
         // 1. Write to dedicated teachers/ collection in Realtime Database
-        const dedicatedTeacherRef = ref(database, `teachers/${teacher.id}`);
+        const dedicatedTeacherRef = ref(database, `teachers/${effectiveTeacherKey}`);
         await update(dedicatedTeacherRef, sanitizedTeacherRecord);
 
-        // 2. Write to schools/{schoolCode}/teachers/{teacher.id} for active Admin Panel list
-        const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${teacher.id}`);
+        // 2. Write to schools/{schoolCode}/teachers/{effectiveTeacherKey} for active Admin Panel list
+        const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${effectiveTeacherKey}`);
         await update(schoolTeacherRef, sanitizedTeacherRecord);
       } catch (err) {
         console.warn('Error saving teacher to RTDB:', err);
@@ -850,17 +867,12 @@ class CloudSyncManager {
 
     if (firestore) {
       try {
-        // Clear deleted flag in Firestore
-        const deletedDocRef = fsDoc(firestore, `schools/${cleanCode}/deletedTeachers/${teacher.id}`);
-        await fsDeleteDoc(deletedDocRef).catch(() => {});
-        if (teacher.uid) {
-          const deletedUidDocRef = fsDoc(firestore, `schools/${cleanCode}/deletedTeachers/${teacher.uid}`);
-          await fsDeleteDoc(deletedUidDocRef).catch(() => {});
-        }
+        const tempDoc = fsDoc(firestore, `schools/${cleanCode}/temporarilyDeletedTeachers/${effectiveTeacherKey}`);
+        await fsDeleteDoc(tempDoc).catch(() => {});
 
-        const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${teacher.id}`);
+        const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${effectiveTeacherKey}`);
         await fsSetDoc(teacherDocRef, sanitizedTeacherRecord, { merge: true });
-        const userDocRef = fsDoc(firestore, `users/${teacher.id}`);
+        const userDocRef = fsDoc(firestore, `users/${effectiveTeacherKey}`);
         await fsSetDoc(userDocRef, { ...sanitizedTeacherRecord, role: 'teacher' }, { merge: true });
       } catch (fsErr) {
         console.warn('Firestore saveTeacherToSchool warning:', fsErr);
@@ -870,23 +882,88 @@ class CloudSyncManager {
     return true;
   }
 
-  public async temporaryDeleteTeacherFromSchool(schoolCode: string, teacherId: string, teacherEmail?: string): Promise<boolean> {
+  public async temporaryDeleteTeacherFromSchool(
+    schoolCode: string,
+    teacherId: string,
+    teacherEmail?: string,
+    teacherUid?: string
+  ): Promise<boolean> {
     if (!schoolCode || !teacherId) return false;
     const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
     const cleanEmail = (teacherEmail || '').trim().toLowerCase();
 
     // Track temporary delete in local storage
     StorageService.addTemporarilyDeletedTeacherId(teacherId, cleanEmail);
+    if (teacherUid) StorageService.addTemporarilyDeletedTeacherId(teacherUid);
 
     if (database) {
       try {
-        // Remove from active school teacher list
-        const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${teacherId}`);
-        await remove(schoolTeacherRef);
+        // Retrieve existing teacher profile so we can store it in temporarilyDeletedTeachers for seamless re-entry
+        let teacherProfile: any = null;
+        const snap = await get(ref(database, `schools/${cleanCode}/teachers/${teacherId}`)).catch(() => null);
+        if (snap && snap.exists()) {
+          teacherProfile = snap.val();
+        }
+        if (!teacherProfile && teacherUid) {
+          const snapUid = await get(ref(database, `schools/${cleanCode}/teachers/${teacherUid}`)).catch(() => null);
+          if (snapUid && snapUid.exists()) {
+            teacherProfile = snapUid.val();
+          }
+        }
+        if (!teacherProfile && cleanEmail) {
+          const allSnap = await get(ref(database, `schools/${cleanCode}/teachers`)).catch(() => null);
+          if (allSnap && allSnap.exists()) {
+            allSnap.forEach(child => {
+              const val = child.val();
+              if (val && ((val.email && val.email.toLowerCase() === cleanEmail) || (val.gmail && val.gmail.toLowerCase() === cleanEmail))) {
+                teacherProfile = val;
+              }
+            });
+          }
+        }
 
-        // Mark temporary deletion in RTDB
-        const tempDeletedRef = ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${teacherId}`);
-        await set(tempDeletedRef, { temporarilyDeleted: true, deletedAt: new Date().toISOString() });
+        const effectiveUid = teacherProfile?.uid || teacherUid || teacherId;
+        const recordToSave = teacherProfile ? {
+          ...teacherProfile,
+          id: effectiveUid,
+          uid: effectiveUid,
+          email: cleanEmail || teacherProfile.email || teacherProfile.gmail || '',
+          gmail: cleanEmail || teacherProfile.gmail || teacherProfile.email || '',
+          temporarilyDeleted: true,
+          status: 'temporary_deleted',
+          deletedAt: new Date().toISOString()
+        } : {
+          id: effectiveUid,
+          uid: effectiveUid,
+          email: cleanEmail,
+          gmail: cleanEmail,
+          temporarilyDeleted: true,
+          status: 'temporary_deleted',
+          deletedAt: new Date().toISOString()
+        };
+
+        // Store full profile in temporarilyDeletedTeachers in RTDB
+        await set(ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${effectiveUid}`), recordToSave);
+        if (teacherId !== effectiveUid) {
+          await set(ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${teacherId}`), recordToSave).catch(() => {});
+        }
+
+        // Remove from active teachers in RTDB
+        await remove(ref(database, `schools/${cleanCode}/teachers/${teacherId}`)).catch(() => {});
+        if (effectiveUid !== teacherId) {
+          await remove(ref(database, `schools/${cleanCode}/teachers/${effectiveUid}`)).catch(() => {});
+        }
+        if (cleanEmail) {
+          const allSnap = await get(ref(database, `schools/${cleanCode}/teachers`)).catch(() => null);
+          if (allSnap && allSnap.exists()) {
+            allSnap.forEach(child => {
+              const val = child.val();
+              if (val && ((val.email && val.email.toLowerCase() === cleanEmail) || (val.gmail && val.gmail.toLowerCase() === cleanEmail))) {
+                remove(ref(database, `schools/${cleanCode}/teachers/${child.key}`)).catch(() => {});
+              }
+            });
+          }
+        }
       } catch (err) {
         console.warn('Error temporarily deleting teacher in RTDB:', err);
       }
@@ -895,9 +972,9 @@ class CloudSyncManager {
     if (firestore) {
       try {
         const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${teacherId}`);
-        await fsDeleteDoc(teacherDocRef);
+        await fsDeleteDoc(teacherDocRef).catch(() => {});
         const tempDeletedDocRef = fsDoc(firestore, `schools/${cleanCode}/temporarilyDeletedTeachers/${teacherId}`);
-        await fsSetDoc(tempDeletedDocRef, { temporarilyDeleted: true, deletedAt: new Date().toISOString() });
+        await fsSetDoc(tempDeletedDocRef, { temporarilyDeleted: true, deletedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
       } catch (fsErr) {
         console.warn('Firestore temporaryDeleteTeacherFromSchool warning:', fsErr);
       }
@@ -959,32 +1036,94 @@ class CloudSyncManager {
     return false;
   }
 
-  public async permanentDeleteTeacherFromSchool(schoolCode: string, teacherId: string, teacherEmail?: string): Promise<boolean> {
+  public async isEmailAuthorizedAdmin(schoolCode: string, email: string): Promise<boolean> {
+    if (!email) return false;
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
+
+    const PRE_AUTHORIZED = new Set([
+      'lincythomas1911@gmail.com',
+      'gelwin72@gmail.com',
+      'joicegeorge1910@gmail.com'
+    ]);
+    if (PRE_AUTHORIZED.has(cleanEmail)) return true;
+
+    if (database) {
+      try {
+        const adminSnap = await get(ref(database, `schools/${cleanCode}/schoolAdmins`)).catch(() => null);
+        if (adminSnap && adminSnap.exists()) {
+          let found = false;
+          adminSnap.forEach(child => {
+            const val = child.val();
+            if (val && val.email && val.email.toLowerCase() === cleanEmail) {
+              found = true;
+            }
+          });
+          if (found) return true;
+        }
+      } catch (e) {}
+    }
+    return false;
+  }
+
+  public async permanentDeleteTeacherFromSchool(
+    schoolCode: string,
+    teacherId: string,
+    teacherEmail?: string,
+    teacherUid?: string
+  ): Promise<boolean> {
     if (!schoolCode || !teacherId) return false;
     const cleanCode = (schoolCode || 'SSHSS@111213').trim().toUpperCase();
     const cleanEmail = (teacherEmail || '').trim().toLowerCase();
     const sanitizedEmail = cleanEmail ? this.sanitizeEmailKey(cleanEmail) : '';
+    const effectiveUid = teacherUid || teacherId;
 
     // Track permanent delete in local storage for teacher membership
     StorageService.addPermanentlyDeletedTeacherId(teacherId, cleanEmail);
+    if (teacherUid) StorageService.addPermanentlyDeletedTeacherId(teacherUid);
 
     if (database) {
       try {
-        const dedicatedTeacherRef = ref(database, `teachers/${teacherId}`);
-        await remove(dedicatedTeacherRef);
+        // Remove from active teachers in RTDB
+        await remove(ref(database, `teachers/${teacherId}`)).catch(() => {});
+        if (effectiveUid !== teacherId) {
+          await remove(ref(database, `teachers/${effectiveUid}`)).catch(() => {});
+        }
 
-        const schoolTeacherRef = ref(database, `schools/${cleanCode}/teachers/${teacherId}`);
-        await remove(schoolTeacherRef);
+        await remove(ref(database, `schools/${cleanCode}/teachers/${teacherId}`)).catch(() => {});
+        if (effectiveUid !== teacherId) {
+          await remove(ref(database, `schools/${cleanCode}/teachers/${effectiveUid}`)).catch(() => {});
+        }
 
-        const permDeletedRef = ref(database, `schools/${cleanCode}/permanentlyDeletedTeachers/${teacherId}`);
-        await set(permDeletedRef, { permanentlyDeleted: true, deletedAt: new Date().toISOString() });
+        // Clean any matches by email in schools/{cleanCode}/teachers
+        if (cleanEmail) {
+          const allSnap = await get(ref(database, `schools/${cleanCode}/teachers`)).catch(() => null);
+          if (allSnap && allSnap.exists()) {
+            allSnap.forEach(child => {
+              const val = child.val();
+              if (val && ((val.email && val.email.toLowerCase() === cleanEmail) || (val.gmail && val.gmail.toLowerCase() === cleanEmail))) {
+                remove(ref(database, `schools/${cleanCode}/teachers/${child.key}`)).catch(() => {});
+              }
+            });
+          }
+        }
 
-        const deletedTeacherRef = ref(database, `schools/${cleanCode}/deletedTeachers/${teacherId}`);
-        await set(deletedTeacherRef, { deleted: true, deletedAt: new Date().toISOString() });
+        // Remove from temporarily deleted teachers
+        await remove(ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${teacherId}`)).catch(() => {});
+        if (effectiveUid !== teacherId) {
+          await remove(ref(database, `schools/${cleanCode}/temporarilyDeletedTeachers/${effectiveUid}`)).catch(() => {});
+        }
+
+        // Record permanent deletion
+        const permRecord = { permanentlyDeleted: true, email: cleanEmail, deletedAt: new Date().toISOString() };
+        await set(ref(database, `schools/${cleanCode}/permanentlyDeletedTeachers/${teacherId}`), permRecord);
+        if (effectiveUid !== teacherId) {
+          await set(ref(database, `schools/${cleanCode}/permanentlyDeletedTeachers/${effectiveUid}`), permRecord);
+        }
 
         if (sanitizedEmail) {
           const deletedEmailRef = ref(database, `schools/${cleanCode}/permanentlyDeletedTeacherEmails/${sanitizedEmail}`);
-          await set(deletedEmailRef, { permanentlyDeleted: true, deletedAt: new Date().toISOString() });
+          await set(deletedEmailRef, { permanentlyDeleted: true, uid: effectiveUid, deletedAt: new Date().toISOString() });
         }
       } catch (err) {
         console.warn('Error permanently deleting teacher from RTDB:', err);
@@ -994,16 +1133,16 @@ class CloudSyncManager {
     if (firestore) {
       try {
         const teacherDocRef = fsDoc(firestore, `schools/${cleanCode}/teachers/${teacherId}`);
-        await fsDeleteDoc(teacherDocRef);
+        await fsDeleteDoc(teacherDocRef).catch(() => {});
         const permDeletedDocRef = fsDoc(firestore, `schools/${cleanCode}/permanentlyDeletedTeachers/${teacherId}`);
-        await fsSetDoc(permDeletedDocRef, { permanentlyDeleted: true, deletedAt: new Date().toISOString() });
-        const deletedTeacherDocRef = fsDoc(firestore, `schools/${cleanCode}/deletedTeachers/${teacherId}`);
-        await fsSetDoc(deletedTeacherDocRef, { deleted: true, deletedAt: new Date().toISOString() });
+        await fsSetDoc(permDeletedDocRef, { permanentlyDeleted: true, deletedAt: new Date().toISOString() }, { merge: true }).catch(() => {});
       } catch (fsErr) {
         console.warn('Firestore permanentDeleteTeacherFromSchool warning:', fsErr);
       }
     }
 
+    // Teacher Membership and School Admin Authorization are completely separate.
+    // We NEVER delete or modify the Firebase Auth account or School Admin record here.
     return true;
   }
 
@@ -1011,12 +1150,13 @@ class CloudSyncManager {
     schoolCode: string,
     teacherId: string,
     teacherEmail?: string,
-    isPermanent: boolean = true
+    isPermanent: boolean = true,
+    teacherUid?: string
   ): Promise<boolean> {
     if (isPermanent) {
-      return this.permanentDeleteTeacherFromSchool(schoolCode, teacherId, teacherEmail);
+      return this.permanentDeleteTeacherFromSchool(schoolCode, teacherId, teacherEmail, teacherUid);
     } else {
-      return this.temporaryDeleteTeacherFromSchool(schoolCode, teacherId, teacherEmail);
+      return this.temporaryDeleteTeacherFromSchool(schoolCode, teacherId, teacherEmail, teacherUid);
     }
   }
 
@@ -1175,8 +1315,9 @@ class CloudSyncManager {
     };
   }
 
-  public async storeCredentials(gmail: string, password: string): Promise<void> {
-    await storeCredentialsInRTDB(gmail, password);
+  public async storeCredentials(_gmail: string, _password: string): Promise<void> {
+    // Requirement 13: Passwords must NEVER be stored in Firebase Realtime Database.
+    return;
   }
 
   public async recordTeacherActivity(
@@ -1245,9 +1386,27 @@ class CloudSyncManager {
           const remoteTeachers: TeacherAccount[] = [];
           if (snapshot.exists()) {
             snapshot.forEach(childSnap => {
-              const t = childSnap.val() as TeacherAccount;
-              if (t && !StorageService.isTeacherDeleted(t.id, t.email || t.gmail)) {
-                remoteTeachers.push(t);
+              const t = childSnap.val() as any;
+              if (
+                t &&
+                t.status !== 'deleted' &&
+                t.status !== 'permanently_deleted' &&
+                t.status !== 'temporary_deleted' &&
+                !t.temporarilyDeleted &&
+                !t.permanentlyDeleted
+              ) {
+                // Ensure temporary deletion flags in local storage are cleared for this active teacher
+                StorageService.removeTemporarilyDeletedTeacherId(t.id, t.email || t.gmail);
+                if (t.uid) StorageService.removeTemporarilyDeletedTeacherId(t.uid);
+
+                remoteTeachers.push({
+                  ...t,
+                  id: t.uid || t.id,
+                  uid: t.uid || t.id,
+                  email: t.email || t.gmail || '',
+                  gmail: t.gmail || t.email || '',
+                  status: 'active'
+                });
               }
             });
           }

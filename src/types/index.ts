@@ -9,6 +9,7 @@ export interface TeacherAccount {
   phone: string;
   schoolName: string;
   schoolCode: string;
+  academicYear?: string;
   status?: 'active' | 'inactive' | 'suspended';
   role?: 'teacher' | 'admin' | 'teacher+admin';
   subject?: string;
@@ -129,6 +130,7 @@ export interface TeacherInfo {
   avatar?: string;
   photoUrl?: string;
   dob?: string;
+  academicYear?: string;
 }
 
 export interface Student {

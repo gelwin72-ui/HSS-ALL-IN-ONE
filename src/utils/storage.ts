@@ -494,6 +494,7 @@ export const StorageService = {
           avatar: info.avatar || accounts[matchedIdx].avatar,
           photoUrl: info.photoUrl || accounts[matchedIdx].photoUrl,
           dob: info.dob || accounts[matchedIdx].dob,
+          academicYear: info.academicYear || accounts[matchedIdx].academicYear,
           lastActiveAt: new Date().toISOString()
         };
         this.saveTeacherAccounts(accounts);
@@ -512,6 +513,7 @@ export const StorageService = {
           phone: info.phone ? info.phone.trim() : '',
           schoolName: schoolProfile.schoolName || 'Higher Secondary School',
           schoolCode: schoolProfile.schoolCode,
+          academicYear: info.academicYear,
           designation: info.designation || 'Class Teacher',
           avatar: info.avatar || '👨‍🏫',
           photoUrl: info.photoUrl,

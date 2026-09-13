@@ -27,6 +27,7 @@ import { auth, onAuthStateChanged, signOut } from './utils/firebase';
 import { CloudSync } from './utils/cloudSync';
 import { ThemeManager } from './utils/themeHelper';
 import { requestAndSaveFCMToken, removeFCMToken } from './utils/fcm';
+import { setOneSignalUser, logoutOneSignalUser } from './utils/onesignal';
 
 // Screens
 import { AuthScreen } from './screens/AuthScreen';
@@ -202,6 +203,17 @@ export function App() {
     const uid = account.id || account.uid || auth?.currentUser?.uid || 'user';
     const schoolCode = account.schoolCode || StorageService.getSchoolProfile().schoolCode;
     requestAndSaveFCMToken(uid, schoolCode).catch(() => {});
+    setOneSignalUser({
+      userId: uid,
+      email: account.email || account.gmail,
+      name: account.name,
+      role: 'teacher',
+      schoolCode: schoolCode,
+      schoolName: account.schoolName,
+      academicYear: account.academicYear,
+      assignedClass: account.assignedClass,
+      subject: account.subject || account.primarySubject
+    }).catch(() => {});
     showToast(`Welcome, ${account.name}! Multi-device sync active.`, 'success');
   };
 
@@ -220,6 +232,14 @@ export function App() {
     const uid = admin.id || auth?.currentUser?.uid || 'admin';
     const schoolCode = admin.schoolCode || StorageService.getSchoolProfile().schoolCode;
     requestAndSaveFCMToken(uid, schoolCode).catch(() => {});
+    setOneSignalUser({
+      userId: uid,
+      email: admin.email,
+      name: admin.adminName || 'Principal',
+      role: 'school_admin',
+      schoolCode: schoolCode,
+      schoolName: admin.schoolName
+    }).catch(() => {});
     showToast(`Welcome to School Admin Portal, ${admin.adminName || 'Principal'}! Multi-device sync active.`, 'success');
   };
 
@@ -230,6 +250,7 @@ export function App() {
     if (currentUser) {
       removeFCMToken(currentUser.uid, schoolProfile.schoolCode).catch(() => {});
     }
+    logoutOneSignalUser().catch(() => {});
     try {
       await signOut(auth);
     } catch (e) {
@@ -250,6 +271,7 @@ export function App() {
     if (currentUser) {
       removeFCMToken(currentUser.uid, schoolProfile.schoolCode).catch(() => {});
     }
+    logoutOneSignalUser().catch(() => {});
     CloudSync.clearActiveSyncEmail();
     StorageService.logout();
     setIsAuthenticated(false);

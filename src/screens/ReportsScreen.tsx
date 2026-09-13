@@ -188,11 +188,15 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
                 onChange={e => setSelectedExamId(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm font-bold text-white focus:outline-none focus:border-purple-500"
               >
-                {exams.map(ex => (
-                  <option key={ex.id} value={ex.id}>
-                    {ex.name} ({ex.type})
-                  </option>
-                ))}
+                {exams.length === 0 ? (
+                  <option value="">No examinations recorded</option>
+                ) : (
+                  exams.map(ex => (
+                    <option key={ex.id} value={ex.id}>
+                      {ex.name} ({ex.type})
+                    </option>
+                  ))
+                )}
               </select>
             </div>
           </div>
@@ -294,11 +298,15 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
                 onChange={e => setSelectedStudentId(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm font-bold text-white focus:outline-none focus:border-cyan-500"
               >
-                {sortedStudents.map(st => (
-                  <option key={st.id} value={st.id}>
-                    Roll #{st.rollNo}: {st.name} ({st.admissionNo})
-                  </option>
-                ))}
+                {sortedStudents.length === 0 ? (
+                  <option value="">No students registered</option>
+                ) : (
+                  sortedStudents.map(st => (
+                    <option key={st.id} value={st.id}>
+                      Roll #{st.rollNo}: {st.name} ({st.admissionNo})
+                    </option>
+                  ))
+                )}
               </select>
             </div>
           </div>

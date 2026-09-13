@@ -77,7 +77,7 @@ import {
   TeacherActivityItem
 } from '../types';
 import { StorageService, DEFAULT_PERIOD_TIMINGS, TIMETABLE_DAYS, registerStorageMutationListener } from '../utils/storage';
-import { db, doc, setDoc, handleFirestoreError, OperationType } from '../utils/firebase';
+import { db, database, ref, update, doc, setDoc, handleFirestoreError, OperationType } from '../utils/firebase';
 import { CloudSync } from '../utils/cloudSync';
 
 interface SchoolAdminDashboardScreenProps {
@@ -106,6 +106,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     email: string;
     subject: string;
     designation: string;
+    academicYear: string;
     assignedClass: string;
     standard: string;
     stream: string;
@@ -117,12 +118,13 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   }>({
     name: '',
     email: '',
-    subject: 'Physics',
-    designation: 'HSST Physics',
-    assignedClass: 'Class 12 (Plus Two) Bio-Science A',
-    standard: 'Class 12 (Plus Two)',
-    stream: 'Bio-Science',
-    section: 'A',
+    subject: '',
+    designation: '',
+    academicYear: '2026-27',
+    assignedClass: '',
+    standard: '',
+    stream: '',
+    section: '',
     phone: '',
     dob: '',
     avatar: '👨‍🏫',
@@ -132,6 +134,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
   // Real-time Firestore synchronization for Teachers, Classes, and Activity Stream
   const [remoteTeachers, setRemoteTeachers] = useState<TeacherAccount[]>([]);
+  const [hasLoadedRemoteTeachers, setHasLoadedRemoteTeachers] = useState(false);
   const [remoteClasses, setRemoteClasses] = useState<ClassItem[]>([]);
   const [realtimeActivities, setRealtimeActivities] = useState<TeacherActivityItem[]>([]);
   const [teacherSignups, setTeacherSignups] = useState<any[]>([]);
@@ -223,7 +226,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Two-Mode Teacher Deletion States
-  const [deleteModalTeacher, setDeleteModalTeacher] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [deleteModalTeacher, setDeleteModalTeacher] = useState<{ id: string; name: string; email: string; uid?: string } | null>(null);
   const [showPermanentConfirmation, setShowPermanentConfirmation] = useState<boolean>(false);
 
   // Teacher Review Remarks State (teacherId -> remark)
@@ -260,6 +263,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     // 1. Subscribe to real-time teacher roster
     const unsubTeachers = CloudSync.listenToSchoolTeachers(activeSchoolCode, (teachersList) => {
       setRemoteTeachers(teachersList);
+      setHasLoadedRemoteTeachers(true);
     });
 
     // 2. Subscribe to real-time classes
@@ -331,47 +335,36 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Load and merge all linked teachers for this school code (sanitizing emails and passwords)
-  const teachers = useMemo(() => {
-    const local = StorageService.getTeachersBySchoolCode(activeSchoolCode) || [];
-    const map = new Map<string, TeacherAccount>();
-
-    // 1. Add local teachers
-    local.forEach(t => {
-      if (!t) return;
-      map.set(t.id, {
-        ...t,
-        email: t.email || '',
+  // Load teachers for this school code (production Firebase Realtime Database is authoritative source of truth)
+  const teachers = useMemo<TeacherAccount[]>(() => {
+    // When remote teachers are loaded or updated via Realtime Database listener
+    if (hasLoadedRemoteTeachers) {
+      return (remoteTeachers || []).map(rt => ({
+        ...rt,
+        id: rt.uid || rt.id,
+        uid: rt.uid || rt.id,
+        email: rt.email || rt.gmail || '',
+        gmail: rt.gmail || rt.email || '',
         password: '',
-        subject: t.subject || t.primarySubject || t.designation || 'Physics'
-      });
-    });
+        subject: rt.subject || rt.primarySubject || rt.designation || 'General',
+        status: (rt.status as 'active' | 'inactive' | 'suspended') || 'active'
+      }));
+    }
 
-    // 2. Merge remote teachers from Firestore (guaranteed to belong to activeSchoolCode)
-    (remoteTeachers || []).forEach(rt => {
-      if (!rt) return;
-      const existing = map.get(rt.id);
-      if (existing) {
-        map.set(rt.id, {
-          ...existing,
-          ...rt,
-          email: rt.email || existing.email || '',
-          password: '',
-          subject: rt.subject || rt.primarySubject || existing.subject || 'Physics'
-        });
-      } else {
-        map.set(rt.id, {
-          ...rt,
-          email: rt.email || '',
-          password: '',
-          subject: rt.subject || rt.primarySubject || rt.designation || 'Physics'
-        });
-      }
-    });
-
-    const allTeachers = Array.from(map.values());
-    return allTeachers.filter(t => t && !StorageService.isTeacherDeleted(t.id, t.email || t.gmail));
-  }, [activeSchoolCode, mutationCount, remoteTeachers]);
+    const local = StorageService.getTeachersBySchoolCode(activeSchoolCode) || [];
+    return local
+      .filter(t => t && !StorageService.isTeacherDeleted(t.id, t.email || t.gmail))
+      .map(t => ({
+        ...t,
+        id: t.uid || t.id,
+        uid: t.uid || t.id,
+        email: t.email || t.gmail || '',
+        gmail: t.gmail || t.email || '',
+        password: '',
+        subject: t.subject || t.primarySubject || t.designation || 'General',
+        status: (t.status as 'active' | 'inactive' | 'suspended') || 'active'
+      }));
+  }, [activeSchoolCode, hasLoadedRemoteTeachers, remoteTeachers]);
 
   // Load all classes in school (merged local and Firestore)
   // Strictly filter to only classrooms created by teachers in this school
@@ -914,12 +907,13 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     setTeacherFormData({
       name: '',
       email: '',
-      subject: 'Physics',
-      designation: 'HSST Physics',
-      assignedClass: 'Class 12 (Plus Two) Bio-Science A',
-      standard: 'Class 12 (Plus Two)',
-      stream: 'Bio-Science',
-      section: 'A',
+      subject: '',
+      designation: '',
+      academicYear: '2026-27',
+      assignedClass: '',
+      standard: '',
+      stream: '',
+      section: '',
       phone: '',
       dob: '',
       avatar: '👨‍🏫',
@@ -933,12 +927,13 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     setTeacherFormData({
       name: teacher.name,
       email: teacher.gmail || teacher.email || '',
-      subject: teacher.subject || teacher.primarySubject || 'Physics',
-      designation: teacher.designation || 'Class Teacher',
-      assignedClass: teacher.assignedClass || 'Class 12 (Plus Two) Bio-Science A',
-      standard: teacher.standard || 'Class 12 (Plus Two)',
-      stream: teacher.stream || 'Bio-Science',
-      section: teacher.section || 'A',
+      subject: teacher.subject || teacher.primarySubject || '',
+      designation: teacher.designation || '',
+      academicYear: teacher.academicYear || '2026-27',
+      assignedClass: teacher.assignedClass || '',
+      standard: teacher.standard || '',
+      stream: teacher.stream || '',
+      section: teacher.section || '',
       phone: teacher.phone,
       dob: teacher.dob || '',
       avatar: teacher.avatar || '👨‍🏫',
@@ -956,6 +951,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
     const composedClass = `${teacherFormData.standard} ${teacherFormData.stream} ${teacherFormData.section}`.trim();
     const cleanEmail = teacherFormData.email.trim().toLowerCase();
+    const effectiveYear = teacherFormData.academicYear.trim() || '2026-27';
 
     if (editingTeacher) {
       const updated: TeacherAccount = {
@@ -964,6 +960,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
         email: cleanEmail || editingTeacher.email || editingTeacher.gmail || '',
         gmail: cleanEmail || editingTeacher.gmail || editingTeacher.email || '',
         status: editingTeacher.status || 'active',
+        academicYear: effectiveYear,
         subject: teacherFormData.subject.trim(),
         designation: teacherFormData.designation.trim(),
         assignedClass: composedClass || teacherFormData.assignedClass.trim(),
@@ -978,6 +975,16 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       };
       StorageService.updateTeacherAccount(updated);
       await CloudSync.saveTeacherToSchool(admin.schoolCode || 'SSHSS@111213', updated);
+
+      if (database) {
+        const cleanSchoolCode = (admin.schoolCode || 'SSHSS@111213').trim().toUpperCase();
+        const tKey = (updated.uid || updated.id || '').trim();
+        if (tKey) {
+          update(ref(database, `teachers/${tKey}`), { academicYear: effectiveYear }).catch(() => {});
+          update(ref(database, `schools/${cleanSchoolCode}/teachers/${tKey}`), { academicYear: effectiveYear }).catch(() => {});
+        }
+      }
+
       showToast(`Teacher profile for ${updated.name} updated successfully!`);
     } else {
       const newId = `teach-${Date.now().toString(36)}`;
@@ -988,10 +995,11 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
         email: cleanEmail,
         gmail: cleanEmail,
         status: 'active',
+        academicYear: effectiveYear,
         subject: teacherFormData.subject.trim(),
         primarySubject: teacherFormData.subject.trim(),
         designation: teacherFormData.designation.trim() || 'Class Teacher',
-        assignedClass: composedClass || 'Class 12 (Plus Two) Bio-Science A',
+        assignedClass: composedClass || '',
         standard: teacherFormData.standard,
         stream: teacherFormData.stream,
         section: teacherFormData.section,
@@ -1006,6 +1014,13 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       };
       StorageService.addTeacherAccount(newTeach);
       await CloudSync.saveTeacherToSchool(admin.schoolCode || 'SSHSS@111213', newTeach);
+
+      if (database) {
+        const cleanSchoolCode = (admin.schoolCode || 'SSHSS@111213').trim().toUpperCase();
+        update(ref(database, `teachers/${newId}`), { academicYear: effectiveYear }).catch(() => {});
+        update(ref(database, `schools/${cleanSchoolCode}/teachers/${newId}`), { academicYear: effectiveYear }).catch(() => {});
+      }
+
       showToast(`New teacher ${newTeach.name} registered under school ${admin.schoolCode || 'SSHSS@111213'}!`);
     }
     setIsTeacherModalOpen(false);
@@ -1036,34 +1051,37 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   const handleDeleteTeacher = (teacherId: string, teacherName: string) => {
     const targetTeacher = teachers.find(t => t.id === teacherId || t.uid === teacherId);
     const teacherEmail = targetTeacher?.email || targetTeacher?.gmail || '';
-    setDeleteModalTeacher({ id: teacherId, name: teacherName, email: teacherEmail });
+    const teacherUid = targetTeacher?.uid || targetTeacher?.id || teacherId;
+    setDeleteModalTeacher({ id: teacherId, name: teacherName, email: teacherEmail, uid: teacherUid });
     setShowPermanentConfirmation(false);
   };
 
   const handleExecuteTemporaryDelete = async () => {
     if (!deleteModalTeacher) return;
-    const { id, name, email } = deleteModalTeacher;
+    const { id, name, email, uid } = deleteModalTeacher;
     setDeleteModalTeacher(null);
     setShowPermanentConfirmation(false);
 
     StorageService.deleteTeacherAccount(id, false);
-    await CloudSync.deleteTeacherFromSchool(activeSchoolCode, id, email, false).catch(() => {});
+    if (uid && uid !== id) StorageService.deleteTeacherAccount(uid, false);
+    await CloudSync.deleteTeacherFromSchool(activeSchoolCode, id, email, false, uid).catch(() => {});
 
-    setRemoteTeachers(prev => prev.filter(t => t.id !== id && t.uid !== id));
+    setRemoteTeachers(prev => prev.filter(t => t.id !== id && t.uid !== id && (!uid || (t.id !== uid && t.uid !== uid))));
     showToast(`Teacher ${name} temporarily removed from School Admin Panel.`);
     triggerRefresh();
   };
 
   const handleExecutePermanentDelete = async () => {
     if (!deleteModalTeacher) return;
-    const { id, name, email } = deleteModalTeacher;
+    const { id, name, email, uid } = deleteModalTeacher;
     setDeleteModalTeacher(null);
     setShowPermanentConfirmation(false);
 
     StorageService.deleteTeacherAccount(id, true);
-    await CloudSync.deleteTeacherFromSchool(activeSchoolCode, id, email, true).catch(() => {});
+    if (uid && uid !== id) StorageService.deleteTeacherAccount(uid, true);
+    await CloudSync.deleteTeacherFromSchool(activeSchoolCode, id, email, true, uid).catch(() => {});
 
-    setRemoteTeachers(prev => prev.filter(t => t.id !== id && t.uid !== id));
+    setRemoteTeachers(prev => prev.filter(t => t.id !== id && t.uid !== id && (!uid || (t.id !== uid && t.uid !== uid))));
     showToast(`Teacher ${name} permanently deleted.`);
     triggerRefresh();
   };
@@ -1135,7 +1153,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       endTime: adminSlotFormData.endTime || timing.endTime,
       subject: adminSlotFormData.subject.trim(),
       subjectCode: adminSlotFormData.subjectCode.trim().toUpperCase() || adminSlotFormData.subject.substring(0, 3).toUpperCase(),
-      className: adminSlotFormData.className.trim() || 'Class 12 Science A',
+      className: adminSlotFormData.className.trim() || (classesList[0]?.className || ''),
       teacherId: adminSlotFormData.teacherId,
       teacherName: assignedTeacher?.name || adminSlotFormData.teacherName || 'Faculty Teacher',
       teacherPhone: assignedTeacher?.phone,
@@ -1733,7 +1751,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
             {/* Teacher Cards Grid with Photos, DOB, Birthday Management & CRUD Actions */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredTeachers.map(teacher => {
-                const assignedCls = teacher.assignedClass || 'Class 12 Science A';
+                const assignedCls = teacher.assignedClass || 'Not Assigned';
                 const dobDisplay = teacher.dob
                   ? new Date(teacher.dob).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
                   : 'Not Specified';
@@ -2294,10 +2312,11 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
             {/* Teacher Cards Grid for Work Dossier inspection */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filteredTeachers.map((teacher, idx) => {
-                const assignedCls = teacher.assignedClass || 'Class 12 Science A';
+                const assignedCls = teacher.assignedClass || 'Not Assigned';
                 const dobDisplay = teacher.dob
                   ? new Date(teacher.dob).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-                  : 'Aug 29, 1988';
+                  : 'Not Specified';
+                const matchingCls = classesList.find(c => c.className === teacher.assignedClass || c.id === teacher.assignedClass);
 
                 return (
                   <div
@@ -2324,6 +2343,10 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                               Active
                             </span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-300 border border-purple-500/20 flex items-center gap-1 font-mono">
+                              <Calendar className="w-3 h-3 text-purple-400" />
+                              {teacher.academicYear || '2026-27'}
+                            </span>
                           </div>
                           <p className="text-xs text-amber-400 font-semibold">{teacher.designation || 'Class Teacher'}</p>
                           <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
@@ -2333,8 +2356,19 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                         </div>
                       </div>
 
-                      {/* Prominent "View Work" button */}
+                      {/* Prominent Action buttons */}
                       <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          id={`btn-edit-teacher-${teacher.id}`}
+                          onClick={() => handleOpenEditTeacher(teacher)}
+                          className="px-3 py-2.5 rounded-xl bg-[#0F1115] hover:bg-slate-800 border border-[#2D3139] text-amber-400 hover:text-amber-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shrink-0"
+                          title="Edit Teacher Profile & Academic Year"
+                        >
+                          <Pencil className="w-4 h-4" />
+                          <span>Edit</span>
+                        </button>
+
                         <button
                           type="button"
                           id={`btn-view-work-${teacher.id}`}
@@ -2360,10 +2394,17 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                     </div>
 
                     {/* Teacher Details Strip */}
-                    <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-[#0F1115] border border-[#2D3139] text-xs">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 rounded-xl bg-[#0F1115] border border-[#2D3139] text-xs">
+                      <div>
+                        <span className="text-[10px] text-slate-500 uppercase font-bold block">Academic Year</span>
+                        <span className="font-mono text-purple-300 font-semibold truncate block flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-purple-400 shrink-0" />
+                          {teacher.academicYear || '2026-27'}
+                        </span>
+                      </div>
                       <div>
                         <span className="text-[10px] text-slate-500 uppercase font-bold block">Phone</span>
-                        <span className="font-mono text-slate-300 truncate block">{teacher.phone}</span>
+                        <span className="font-mono text-slate-300 truncate block">{teacher.phone || '-'}</span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-500 uppercase font-bold block">Date of Birth</span>
@@ -2374,7 +2415,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-500 uppercase font-bold block">Email</span>
-                        <span className="text-slate-300 truncate block font-mono text-[11px]">{teacher.email}</span>
+                        <span className="text-slate-300 truncate block font-mono text-[11px]">{teacher.email || teacher.gmail || '-'}</span>
                       </div>
                     </div>
 
@@ -2384,7 +2425,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                         <CheckCircle2 className="w-3.5 h-3.5" /> Attendance Register: Up to date
                       </span>
                       <span className="text-[11px] font-mono text-slate-400">
-                        Class Strength: <strong>45 Students</strong>
+                        Class Strength: <strong>{matchingCls ? `${matchingCls.classStrength || 0} Students` : 'Not Assigned'}</strong>
                       </span>
                     </div>
                   </div>
@@ -2400,20 +2441,24 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="p-5 rounded-2xl bg-[#1A1C23] border border-[#2D3139] space-y-2">
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Terminal Examinations Conducted</span>
-                <h4 className="text-3xl font-black text-white">3 Major Cycles</h4>
-                <p className="text-xs text-slate-400">First Terminal (Onam), Second Terminal (Christmas), and Model Exam cycles.</p>
+                <h4 className="text-3xl font-black text-white">{crossClassData.allExams.length} Cycles</h4>
+                <p className="text-xs text-slate-400">Total examinations recorded across all classes.</p>
               </div>
 
               <div className="p-5 rounded-2xl bg-[#1A1C23] border border-[#2D3139] space-y-2">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Overall School Pass Percentage</span>
-                <h4 className="text-3xl font-black text-emerald-400">96.8%</h4>
-                <p className="text-xs text-slate-400">Verified across Physics, Chemistry, Biology, Mathematics, and Computer Science.</p>
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Overall School Average</span>
+                <h4 className="text-3xl font-black text-emerald-400">
+                  {crossClassData.overallAcademicAverage > 0 ? `${crossClassData.overallAcademicAverage}%` : '0%'}
+                </h4>
+                <p className="text-xs text-slate-400">Calculated from recorded student examination marks.</p>
               </div>
 
               <div className="p-5 rounded-2xl bg-[#1A1C23] border border-[#2D3139] space-y-2">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Teacher Marks Compliance</span>
-                <h4 className="text-3xl font-black text-amber-400">100% Entered</h4>
-                <p className="text-xs text-slate-400">All registered teachers have uploaded terminal evaluation marks into the system.</p>
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Teacher Marks Entered</span>
+                <h4 className="text-3xl font-black text-amber-400">
+                  {crossClassData.allExams.length > 0 ? `${crossClassData.allExams.length} Recorded` : '0 Recorded'}
+                </h4>
+                <p className="text-xs text-slate-400">Examinations configured by faculty for evaluation.</p>
               </div>
             </div>
 
@@ -2424,65 +2469,38 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 Higher Secondary Institutional Exam Monitoring Schedule
               </h3>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-[#0F1115] text-slate-400 uppercase font-bold text-[10px] tracking-wider">
-                    <tr>
-                      <th className="py-3 px-4">Examination Title</th>
-                      <th className="py-3 px-4">Category</th>
-                      <th className="py-3 px-4">Subjects Covered</th>
-                      <th className="py-3 px-4">School Average</th>
-                      <th className="py-3 px-4 text-right">Principal Verification</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#2D3139]/60">
-                    <tr className="hover:bg-[#0F1115]/50">
-                      <td className="py-3.5 px-4 font-bold text-white">
-                        First Terminal / Onam Examination
-                        <span className="block text-[10px] font-normal text-slate-400">August - September 2025</span>
-                      </td>
-                      <td className="py-3.5 px-4 font-semibold text-purple-300">Terminal Exam</td>
-                      <td className="py-3.5 px-4">Core Subjects (6 Papers)</td>
-                      <td className="py-3.5 px-4 font-bold text-emerald-400">88.4%</td>
-                      <td className="py-3.5 px-4 text-right">
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          ✓ Verified by Principal
-                        </span>
-                      </td>
-                    </tr>
-
-                    <tr className="hover:bg-[#0F1115]/50">
-                      <td className="py-3.5 px-4 font-bold text-white">
-                        Second Terminal / Christmas Exam
-                        <span className="block text-[10px] font-normal text-slate-400">December 2025</span>
-                      </td>
-                      <td className="py-3.5 px-4 font-semibold text-purple-300">Terminal Exam</td>
-                      <td className="py-3.5 px-4">Full Core Syllabus + Practicals</td>
-                      <td className="py-3.5 px-4 font-bold text-emerald-400">91.6%</td>
-                      <td className="py-3.5 px-4 text-right">
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          ✓ Verified by Principal
-                        </span>
-                      </td>
-                    </tr>
-
-                    <tr className="hover:bg-[#0F1115]/50">
-                      <td className="py-3.5 px-4 font-bold text-white">
-                        Higher Secondary Model Examination 2026
-                        <span className="block text-[10px] font-normal text-slate-400">February 2026</span>
-                      </td>
-                      <td className="py-3.5 px-4 font-semibold text-purple-300">Model Exam</td>
-                      <td className="py-3.5 px-4">Board Exam Pattern (All Streams)</td>
-                      <td className="py-3.5 px-4 font-bold text-amber-400">In Progress</td>
-                      <td className="py-3.5 px-4 text-right">
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                          ⏳ Teacher Entry Open
-                        </span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              {crossClassData.allExams.length === 0 ? (
+                <div className="p-8 text-center rounded-xl bg-[#0F1115] border border-[#2D3139] space-y-2">
+                  <BarChart3 className="w-8 h-8 text-slate-500 mx-auto" />
+                  <p className="text-sm font-bold text-slate-300">No Examinations Recorded</p>
+                  <p className="text-xs text-slate-500">Teachers will schedule examinations and upload student marks from their portals.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#0F1115] text-slate-400 uppercase font-bold text-[10px] tracking-wider">
+                      <tr>
+                        <th className="py-3 px-4">Examination Title</th>
+                        <th className="py-3 px-4">Category</th>
+                        <th className="py-3 px-4">Subjects Covered</th>
+                        <th className="py-3 px-4">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#2D3139]/60">
+                      {crossClassData.allExams.map((ex) => (
+                        <tr key={ex.id} className="hover:bg-[#0F1115]/50">
+                          <td className="py-3.5 px-4 font-bold text-white">
+                            {ex.name}
+                          </td>
+                          <td className="py-3.5 px-4 font-semibold text-purple-300">{ex.type}</td>
+                          <td className="py-3.5 px-4">{ex.subjects ? `${ex.subjects.length} Subjects` : 'Core Subjects'}</td>
+                          <td className="py-3.5 px-4 text-slate-400 font-mono">{ex.date || 'Scheduled'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -4101,6 +4119,12 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                           <span className="text-slate-500">Subject:</span>
                           <span className="text-slate-300 font-medium">{t.subject}</span>
                         </div>
+                        {t.academicYear && (
+                          <div className="flex justify-between text-xs">
+                            <span className="text-slate-500">Academic Year:</span>
+                            <span className="text-purple-300 font-medium font-mono">{t.academicYear}</span>
+                          </div>
+                        )}
                         {t.isClassTeacher && (
                           <div className="flex justify-between text-xs">
                             <span className="text-slate-500">Class Assigned:</span>
@@ -4314,11 +4338,18 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
             </div>
 
             {/* Teacher Info Grid (No Email or Password) */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] text-xs">
               <div>
                 <span className="text-[10px] text-slate-500 uppercase font-bold block">Assigned Classroom</span>
                 <span className="font-semibold text-white truncate block">
                   {selectedTeacherForDossier.assignedClass || 'Class 12 Bio-Science A'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-500 uppercase font-bold block">Academic Year</span>
+                <span className="text-purple-300 font-bold truncate block flex items-center gap-1 font-mono">
+                  <Calendar className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                  {selectedTeacherForDossier.academicYear || '2026-27'}
                 </span>
               </div>
               <div>
@@ -4336,7 +4367,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
               </div>
               <div>
                 <span className="text-[10px] text-slate-500 uppercase font-bold block">Phone Number</span>
-                <span className="font-mono text-slate-300 truncate block">{selectedTeacherForDossier.phone}</span>
+                <span className="font-mono text-slate-300 truncate block">{selectedTeacherForDossier.phone || '-'}</span>
               </div>
             </div>
 
@@ -4798,8 +4829,8 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 );
               })()}
 
-              {/* Designation, Date of Birth & Phone */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Designation, Academic Year, Date of Birth & Phone */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="space-y-1">
                   <label className="text-[11px] font-bold text-slate-300">Designation / Role</label>
                   <input
@@ -4808,6 +4839,22 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                     onChange={e => setTeacherFormData(f => ({ ...f, designation: e.target.value }))}
                     placeholder="e.g. HSST Physics, Class Teacher"
                     className="w-full px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-300 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Academic Year *</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    id="admin-teacher-academicyear"
+                    value={teacherFormData.academicYear}
+                    onChange={e => setTeacherFormData(f => ({ ...f, academicYear: e.target.value }))}
+                    placeholder="e.g. 2026-27 or 2025-26"
+                    className="w-full px-3 py-2 rounded-xl bg-[#0F1115] border border-[#2D3139] text-white text-xs focus:outline-none focus:border-amber-500 font-mono"
                   />
                 </div>
 

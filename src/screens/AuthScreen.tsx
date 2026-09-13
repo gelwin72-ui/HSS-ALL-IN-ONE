@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   GraduationCap,
   Sparkles,
@@ -56,8 +56,7 @@ import {
   ref,
   set,
   update,
-  get,
-  storeCredentialsInRTDB
+  get
 } from '../utils/firebase';
 import { CloudSync } from '../utils/cloudSync';
 
@@ -90,6 +89,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
   const [signupPhone, setSignupPhone] = useState('');
   const [signupSchool, setSignupSchool] = useState('');
   const [signupSchoolCode, setSignupSchoolCode] = useState('');
+  const [signupAcademicYear, setSignupAcademicYear] = useState('');
   const [signupSubject, setSignupSubject] = useState('Physics');
   const [customSubject, setCustomSubject] = useState('');
   const [signupDesignation, setSignupDesignation] = useState('');
@@ -107,6 +107,31 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
   const [loginEmailOrPhone, setLoginEmailOrPhone] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginDob, setLoginDob] = useState('');
+  const [loginAcademicYear, setLoginAcademicYear] = useState('');
+
+  // Auto-fill saved teacher details (School Code, Academic Year, DOB) when email/phone entered
+  useEffect(() => {
+    const q = loginEmailOrPhone.trim().toLowerCase();
+    if (q) {
+      const accounts = StorageService.getTeacherAccounts();
+      const match = accounts.find(a => 
+        (a.email && a.email.toLowerCase() === q) ||
+        (a.gmail && a.gmail.toLowerCase() === q) ||
+        (a.phone && a.phone.trim() === q)
+      );
+      if (match) {
+        if (match.academicYear && !loginAcademicYear) {
+          setLoginAcademicYear(match.academicYear);
+        }
+        if (match.schoolCode && !loginSchoolCode) {
+          setLoginSchoolCode(match.schoolCode);
+        }
+        if (match.dob && !loginDob) {
+          setLoginDob(match.dob);
+        }
+      }
+    }
+  }, [loginEmailOrPhone]);
 
   // School Admin Login Form State
   const [adminGmail, setAdminGmail] = useState('');
@@ -226,6 +251,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       setErrorMsg('Please enter your unique School Code (e.g. SSHSS@111213).');
       return;
     }
+    if (!signupAcademicYear.trim()) {
+      setErrorMsg('Please enter the Academic Year (e.g. 2026-27 or 2025-26).');
+      return;
+    }
     if (!signupDob) {
       setErrorMsg('Please enter your date of birth.');
       return;
@@ -290,8 +319,9 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         name: signupName.trim(),
         email: cleanEmail,
         gmail: cleanEmail,
-        password: signupPassword,
+        password: '',
         status: 'active',
+        academicYear: signupAcademicYear.trim(),
         phone: signupPhone.trim(),
         schoolName: signupSchool.trim() || "St. Sebastian's Higher Secondary School",
         schoolCode: cleanSchoolCode,
@@ -320,6 +350,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
             phone: signupPhone.trim(),
             schoolName: signupSchool.trim(),
             schoolCode: cleanSchoolCode,
+            academicYear: signupAcademicYear.trim(),
             subject: effectiveSubject,
             designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
             role: 'teacher',
@@ -336,6 +367,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
             phone: signupPhone.trim(),
             schoolName: signupSchool.trim(),
             schoolCode: cleanSchoolCode,
+            academicYear: signupAcademicYear.trim(),
             subject: effectiveSubject,
             designation: signupDesignation.trim() || `${effectiveSubject} Teacher`,
             role: 'teacher',
@@ -350,6 +382,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
             mobileNumber: signupPhone.trim(),
             schoolOrCollegeName: signupSchool.trim(),
             schoolCode: cleanSchoolCode,
+            academicYear: signupAcademicYear.trim(),
             subject: effectiveSubject,
             isClassTeacher: signupIsClassTeacher,
             className: signupIsClassTeacher ? effectiveStandard : '',
@@ -378,11 +411,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         }
       }
 
-      // Save credentials in Firebase Realtime Database under 'Gmail and Password'
-      if (cleanEmail && signupPassword) {
-        storeCredentialsInRTDB(cleanEmail, signupPassword).catch(() => {});
-      }
-
       // Register initial class if standard and section provided
       if (effectiveStandard && signupSection) {
         const initialClass: ClassItem = {
@@ -391,7 +419,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           standard: effectiveStandard,
           stream: effectiveStream,
           section: signupSection,
-          academicYear: '2025-2026',
+          academicYear: signupAcademicYear.trim() || '2026-2027',
           classStrength: 0,
           teacherId: firebaseUid,
           teacherName: newAccount.name,
@@ -419,7 +447,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         teacherName: newAccount.name,
         email: newAccount.email,
         phone: newAccount.phone,
-        designation: newAccount.designation
+        designation: newAccount.designation,
+        academicYear: signupAcademicYear.trim()
       };
       StorageService.saveTeacherInfo(updatedTeacher);
 
@@ -429,6 +458,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         standard: signupStandard,
         stream: signupStream,
         section: signupSection,
+        academicYear: signupAcademicYear.trim(),
         className: assignedClassName
       };
       StorageService.saveClassInfo(updatedClass);
@@ -610,12 +640,20 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       match.id = effectiveUid;
       match.uid = effectiveUid;
       match.status = 'active';
+      match.password = '';
       match.schoolCode = cleanSchoolCode;
+      if (loginAcademicYear.trim()) {
+        match.academicYear = loginAcademicYear.trim();
+      }
       match.lastActiveAt = new Date().toISOString();
 
       // Clear any temporary deletion flags upon re-entry
       StorageService.removeDeletedTeacherId(match.id, match.email || match.gmail);
-      if (match.uid) StorageService.removeDeletedTeacherId(match.uid);
+      StorageService.removeTemporarilyDeletedTeacherId(match.id, match.email || match.gmail);
+      if (match.uid) {
+        StorageService.removeDeletedTeacherId(match.uid);
+        StorageService.removeTemporarilyDeletedTeacherId(match.uid);
+      }
 
       // Update local storage and auth session instantly
       const allAccounts = StorageService.getTeacherAccounts();
@@ -632,9 +670,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         teacherName: match.name,
         email: match.email,
         phone: match.phone,
-        designation: match.designation
+        designation: match.designation,
+        academicYear: match.academicYear
       };
       StorageService.saveTeacherInfo(updatedTeacher);
+
+      if (match.academicYear) {
+        const currentClass = StorageService.getClassInfo();
+        StorageService.saveClassInfo({
+          ...currentClass,
+          academicYear: match.academicYear
+        });
+      }
 
       StorageService.setAuthSession({
         isLoggedIn: true,
@@ -667,10 +714,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           success: true,
           details: `Teacher logged in successfully: ${match.name}`
         }).catch(() => {});
-      }
-
-      if (match.email && loginPassword) {
-        storeCredentialsInRTDB(match.email, loginPassword).catch(() => {});
       }
 
       setSuccessMsg(`Welcome back, ${match.name}! Accessing your classroom portal...`);
@@ -787,11 +830,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           details: `Authorized School Admin logged in: ${cleanGmail}`
         }).catch(() => {});
 
-        // Save admin credentials in Firebase Realtime Database under 'Gmail and Password'
-        if (cleanGmail && adminPassword) {
-          storeCredentialsInRTDB(cleanGmail, adminPassword).catch(() => {});
-        }
-
         setSuccessMsg(`Welcome, ${adminAccount.adminName}! Access granted to School Admin Panel.`);
         if (onAdminLoginSuccess) {
           onAdminLoginSuccess(adminAccount);
@@ -867,11 +905,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
 
       CloudSync.setActiveSyncEmail(cleanGmail);
       if (authUser) CloudSync.startRealtimeSync(authUser);
-
-      // Save admin credentials in Firebase Realtime Database under 'Gmail and Password'
-      if (cleanGmail && adminPassword) {
-        storeCredentialsInRTDB(cleanGmail, adminPassword).catch(() => {});
-      }
 
       setSuccessMsg(`Welcome, ${adminAccount.adminName}! Access granted.`);
       if (onAdminLoginSuccess) {
@@ -1241,6 +1274,25 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                 </div>
               </div>
 
+              {/* Academic Year */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Academic Year *
+                </label>
+                <div className="relative">
+                  <Calendar className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    required
+                    id="signup-academicyear"
+                    value={signupAcademicYear}
+                    onChange={e => setSignupAcademicYear(e.target.value)}
+                    placeholder="Enter academic year (e.g. 2026-27 or 2025-26)"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-mono"
+                  />
+                </div>
+              </div>
+
               {/* Subject Assigned & Designation */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -1458,6 +1510,32 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     onChange={e => setLoginSchoolCode(e.target.value)}
                     placeholder="Enter your school code"
                     className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-mono uppercase"
+                  />
+                </div>
+              </div>
+
+              {/* Academic Year */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-purple-400" />
+                    Academic Year
+                  </label>
+                  {loginAcademicYear && (
+                    <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Auto-loaded
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <Calendar className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    id="login-academicyear"
+                    value={loginAcademicYear}
+                    onChange={e => setLoginAcademicYear(e.target.value)}
+                    placeholder="Enter academic year (e.g. 2026-27 or 2025-26)"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-mono"
                   />
                 </div>
               </div>

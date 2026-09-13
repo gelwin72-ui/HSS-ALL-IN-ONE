@@ -41,6 +41,7 @@ import { exportStudentsToCSV, exportAttendanceToCSV } from '../utils/csvHelper';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { auth, googleProvider, signInWithPopup, signOut } from '../utils/firebase';
 import { CloudSync, SyncStatus } from '../utils/cloudSync';
+import { getNotificationStatus, requestNotificationPermission, ONESIGNAL_APP_ID } from '../utils/onesignal';
 
 interface SettingsScreenProps {
   school: SchoolProfile;
@@ -94,6 +95,42 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [syncEmail, setSyncEmail] = useState<string | undefined>(CloudSync.getActiveSyncEmail() || auth?.currentUser?.email || teacher?.email);
   const [firebaseUser, setFirebaseUser] = useState(auth?.currentUser || null);
   const [isSyncingAction, setIsSyncingAction] = useState(false);
+
+  // OneSignal Push Notification State
+  const [pushStatus, setPushStatus] = useState<{
+    supported: boolean;
+    permission: boolean;
+    optedIn: boolean;
+    subscriptionId?: string | null;
+  }>({ supported: true, permission: false, optedIn: false });
+  const [isEnablingPush, setIsEnablingPush] = useState(false);
+
+  useEffect(() => {
+    getNotificationStatus().then(status => {
+      setPushStatus(status);
+    }).catch(() => {});
+  }, []);
+
+  const handleTogglePushPermission = async () => {
+    try {
+      setIsEnablingPush(true);
+      const granted = await requestNotificationPermission();
+      const status = await getNotificationStatus();
+      setPushStatus(status);
+      if (granted) {
+        setSuccessMsg('Push notifications enabled! Device is subscribed to OneSignal and school broadcasts.');
+        setTimeout(() => setSuccessMsg(null), 4000);
+      } else {
+        setErrorMsg('Notification permission was not granted. Please allow notifications in browser/Android settings.');
+        setTimeout(() => setErrorMsg(null), 4000);
+      }
+    } catch (e: any) {
+      setErrorMsg(e.message || 'Error configuring push notifications');
+      setTimeout(() => setErrorMsg(null), 4000);
+    } finally {
+      setIsEnablingPush(false);
+    }
+  };
 
   useEffect(() => {
     const unsub = CloudSync.addListener((status, lastSynced, email) => {
@@ -429,6 +466,91 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             <Download className="w-3.5 h-3.5 text-indigo-400" />
             <span>Pull & Restore Data from Another Device</span>
           </button>
+        </div>
+      </div>
+
+      {/* ONESIGNAL PUSH NOTIFICATIONS & DEVICE ALERTS */}
+      <div className="rounded-3xl bg-[#1A1C23] border border-[#2D3139] p-5 sm:p-6 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#2D3139] gap-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <Bell className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-white">ONESIGNAL PUSH NOTIFICATIONS</h2>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
+                  pushStatus.permission
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                }`}>
+                  {pushStatus.permission ? 'Active & Subscribed' : 'Permission Required'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                OneSignal App ID: <span className="font-mono text-slate-300 font-bold">{ONESIGNAL_APP_ID}</span>
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleTogglePushPermission}
+            disabled={isEnablingPush}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition flex items-center gap-2 active:scale-95 disabled:opacity-50 self-start sm:self-auto ${
+              pushStatus.permission
+                ? 'bg-[#0F1115] hover:bg-[#252830] text-emerald-400 border border-emerald-500/30'
+                : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-amber-950/40'
+            }`}
+          >
+            {pushStatus.permission ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span>Subscribed to Push Notifications</span>
+              </>
+            ) : (
+              <>
+                <Bell className="w-4 h-4" />
+                <span>{isEnablingPush ? 'Requesting Permission...' : 'Enable Push Notifications'}</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139]/80 space-y-1">
+            <span className="text-[11px] font-bold text-slate-400 uppercase">Notification Status</span>
+            <p className="text-xs font-bold text-white flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full ${pushStatus.permission ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              {pushStatus.permission ? 'Notifications Allowed' : 'Permission Not Yet Granted'}
+            </p>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139]/80 space-y-1">
+            <span className="text-[11px] font-bold text-slate-400 uppercase">Device State</span>
+            <p className="text-xs font-bold text-white flex items-center gap-1.5">
+              <Smartphone className="w-3.5 h-3.5 text-purple-400" />
+              Android APK / PWA Compatible
+            </p>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139]/80 space-y-1">
+            <span className="text-[11px] font-bold text-slate-400 uppercase">Dashboard Directives</span>
+            <p className="text-xs font-bold text-white flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5 text-cyan-400" />
+              OneSignal Admin Broadcasts Active
+            </p>
+          </div>
+        </div>
+
+        <div className="p-3.5 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-xs text-amber-200/90 leading-relaxed flex items-start gap-2.5">
+          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold text-amber-300">Push Notifications & OneSignal Dashboard Testing</p>
+            <p className="text-[11px] text-slate-300 mt-0.5">
+              When push notifications are enabled on this device, broadcasts sent from your OneSignal Dashboard (with App ID <span className="font-mono text-amber-200">{ONESIGNAL_APP_ID}</span>) will be delivered whether the application is open, in the background, or closed.
+            </p>
+          </div>
         </div>
       </div>
 

@@ -171,7 +171,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const totalCount = sortedStudents.length;
   const presentCount = presentStudents.length;
   const absentCount = absentStudents.length;
-  const attendancePercentage = totalCount > 0 ? ((presentCount / totalCount) * 100).toFixed(1) : '100';
+  const attendancePercentage = totalCount > 0 ? ((presentCount / totalCount) * 100).toFixed(1) : '0';
 
   // Toggle single student attendance
   const toggleAttendance = (studentId: string) => {
