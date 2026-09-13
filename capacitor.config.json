@@ -5,7 +5,7 @@
   "bundledWebRuntime": false,
   "plugins": {
     "OneSignal": {
-      "appId": "409ada84-769c-4e78-8fd4-3e4079d136f9"
+      "appId": "e408c264-cc29-4f91-809f-1e5effc2b43d"
     }
   }
 }

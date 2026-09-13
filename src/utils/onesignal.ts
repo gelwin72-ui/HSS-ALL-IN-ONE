@@ -1,6 +1,6 @@
 import OneSignal from 'react-onesignal';
 
-export const ONESIGNAL_APP_ID = '409ada84-769c-4e78-8fd4-3e4079d136f9';
+export const ONESIGNAL_APP_ID = 'e408c264-cc29-4f91-809f-1e5effc2b43d';
 
 let isInitialized = false;
 let initPromise: Promise<boolean> | null = null;
@@ -15,15 +15,19 @@ export async function initOneSignal(): Promise<boolean> {
 
   initPromise = (async () => {
     try {
+      // Determine service worker path dynamically for GitHub Pages sub-directories vs root domain
+      const baseUrl = import.meta.env.BASE_URL || '/';
+      const swPath = baseUrl.endsWith('/') ? `${baseUrl}OneSignalSDKWorker.js` : `${baseUrl}/OneSignalSDKWorker.js`;
+
       await (OneSignal.init as any)({
         appId: ONESIGNAL_APP_ID,
         allowLocalhostAsSecureOrigin: true,
-        serviceWorkerPath: 'OneSignalSDKWorker.js',
-        serviceWorkerParam: { scope: '/' }
+        serviceWorkerPath: swPath,
+        serviceWorkerParam: { scope: baseUrl }
       });
 
       isInitialized = true;
-      console.log('[OneSignal] Initialized successfully with App ID:', ONESIGNAL_APP_ID);
+      console.log('[OneSignal] Initialized successfully with App ID:', ONESIGNAL_APP_ID, 'SW Path:', swPath);
 
       // Register listener for foreground notifications
       OneSignal.Notifications.addEventListener('foregroundWillDisplay', (event) => {

@@ -22,6 +22,7 @@ import { Toast, ToastType } from './components/Toast';
 import { SearchModal } from './components/SearchModal';
 import { ReminderModal } from './components/ReminderModal';
 import { AddClassModal } from './components/AddClassModal';
+import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
 
 import { auth, onAuthStateChanged, signOut } from './utils/firebase';
 import { CloudSync } from './utils/cloudSync';
@@ -790,7 +791,10 @@ export function App() {
         onDeleteClass={handleDeleteClass}
       />
 
-      {/* 8. Toast Message Popups */}
+      {/* 8. Notification Permission Banner */}
+      <NotificationPermissionBanner />
+
+      {/* 9. Toast Message Popups */}
       {toast && (
         <Toast
           message={toast.message}
