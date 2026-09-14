@@ -992,6 +992,16 @@ class CloudSyncManager {
     const cleanEmail = (email || '').trim().toLowerCase();
     const cleanUid = (uid || '').trim();
 
+    // Prevent pre-authorized admins from ever being permanently blocked from teacher access
+    const PRE_AUTHORIZED_EMAILS = new Set([
+      'lincythomas1911@gmail.com',
+      'gelwin72@gmail.com',
+      'joicegeorge1910@gmail.com'
+    ]);
+    if (cleanEmail && PRE_AUTHORIZED_EMAILS.has(cleanEmail)) {
+      return false;
+    }
+
     if (StorageService.isTeacherPermanentlyDeleted(cleanUid, cleanEmail)) {
       return true;
     }

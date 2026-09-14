@@ -563,16 +563,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       }
 
       if (isPermDeleted) {
-        const PRE_AUTHORIZED_EMAILS = new Set([
-          'lincythomas1911@gmail.com',
-          'gelwin72@gmail.com',
-          'joicegeorge1910@gmail.com'
-        ]);
-        if (PRE_AUTHORIZED_EMAILS.has(cleanQuery)) {
-          setErrorMsg('This teacher account has been permanently removed from this school. To access the School Admin Panel, please use the "School Admin Login" tab.');
-        } else {
-          setErrorMsg('This teacher account has been permanently removed from this school. Please contact the School Administrator.');
-        }
+        setErrorMsg('This teacher account has been permanently removed from this school. Please contact the School Administrator.');
         setIsLoading(false);
         return;
       }
