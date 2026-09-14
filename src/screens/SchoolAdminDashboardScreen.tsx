@@ -16,6 +16,7 @@ import {
   FileSpreadsheet,
   Printer,
   ChevronRight,
+  RefreshCw,
   School,
   Mail,
   Phone,
@@ -999,58 +1000,84 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     showToast(`Complete School Backup exported (${filename})`);
   };
 
-  const handleExportAuditPDF = () => {
-    try {
-      const doc = generateSchoolAdminAuditPDF(
-        schoolProfile,
-        admin,
-        teachers,
-        classesList,
-        {
-          totalStudents: crossClassData.totalStudents,
-          overallAttendanceRate: crossClassData.overallAttendanceRate,
-          overallAcademicAverage: crossClassData.overallAcademicAverage
-        }
-      );
-      const filename = `Consolidated_School_Audit_${admin.schoolCode || 'SSHSS'}_${new Date().toISOString().split('T')[0]}.pdf`;
-      doc.save(filename);
-      showToast(`Consolidated Audit PDF downloaded (${filename})!`);
-    } catch (e) {
-      console.error('PDF export error:', e);
-      showToast('Error generating Audit PDF. Please try again.');
-    }
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleExportAuditPDF = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+    showToast('Compiling School Audit PDF...');
+    
+    setTimeout(async () => {
+      try {
+        const doc = generateSchoolAdminAuditPDF(
+          schoolProfile,
+          admin,
+          teachers,
+          classesList,
+          {
+            totalStudents: crossClassData.totalStudents,
+            overallAttendanceRate: crossClassData.overallAttendanceRate,
+            overallAcademicAverage: crossClassData.overallAcademicAverage
+          }
+        );
+        const filename = `Consolidated_School_Audit_${admin.schoolCode || 'SSHSS'}_${new Date().toISOString().split('T')[0]}.pdf`;
+        await shareOrDownloadPDF(doc, filename, 'School Audit Report');
+        showToast(`Consolidated Audit PDF downloaded (${filename})!`);
+      } catch (e) {
+        console.error('PDF export error:', e);
+        showToast('Error generating Audit PDF. Please try again.');
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 50);
   };
 
-  const handleExportStudentsPDF = () => {
-    try {
-      const doc = generateSchoolAdminStudentsPDF(
-        schoolProfile,
-        admin,
-        crossClassData.allStudentsList
-      );
-      const filename = `Students_Roster_${admin.schoolCode || 'SSHSS'}_${new Date().toISOString().split('T')[0]}.pdf`;
-      doc.save(filename);
-      showToast(`Students Roster PDF downloaded (${filename})!`);
-    } catch (e) {
-      console.error('PDF export error:', e);
-      showToast('Error generating Students PDF.');
-    }
+  const handleExportStudentsPDF = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+    showToast('Compiling Students Roster PDF...');
+    
+    setTimeout(async () => {
+      try {
+        const doc = generateSchoolAdminStudentsPDF(
+          schoolProfile,
+          admin,
+          crossClassData.allStudentsList
+        );
+        const filename = `Students_Roster_${admin.schoolCode || 'SSHSS'}_${new Date().toISOString().split('T')[0]}.pdf`;
+        await shareOrDownloadPDF(doc, filename, 'School Students Roster');
+        showToast(`Students Roster PDF downloaded (${filename})!`);
+      } catch (e) {
+        console.error('PDF export error:', e);
+        showToast('Error generating Students PDF.');
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 50);
   };
 
-  const handleExportTeachersPDF = () => {
-    try {
-      const doc = generateSchoolAdminTeachersPDF(
-        schoolProfile,
-        admin,
-        teachers
-      );
-      const filename = `Teacher_Directory_${admin.schoolCode || 'SSHSS'}_${new Date().toISOString().split('T')[0]}.pdf`;
-      doc.save(filename);
-      showToast(`Teacher Directory PDF downloaded (${filename})!`);
-    } catch (e) {
-      console.error('PDF export error:', e);
-      showToast('Error generating Teachers PDF.');
-    }
+  const handleExportTeachersPDF = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+    showToast('Compiling Teacher Directory PDF...');
+    
+    setTimeout(async () => {
+      try {
+        const doc = generateSchoolAdminTeachersPDF(
+          schoolProfile,
+          admin,
+          teachers
+        );
+        const filename = `Teacher_Directory_${admin.schoolCode || 'SSHSS'}_${new Date().toISOString().split('T')[0]}.pdf`;
+        await shareOrDownloadPDF(doc, filename, 'Teacher Directory');
+        showToast(`Teacher Directory PDF downloaded (${filename})!`);
+      } catch (e) {
+        console.error('PDF export error:', e);
+        showToast('Error generating Teachers PDF.');
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 50);
   };
 
   const handleExportStudentsCsv = () => {
@@ -1455,7 +1482,20 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   };
 
   return (
-    <div className="min-h-screen bg-[#0F1115] text-slate-100 flex flex-col selection:bg-amber-500 selection:text-slate-900 font-sans">
+    <div className="min-h-screen bg-[#0F1115] text-slate-100 flex flex-col selection:bg-amber-500 selection:text-slate-900 font-sans relative">
+      {/* Loading Overlay for PDF Generation */}
+      {isGenerating && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#1A1C23] p-6 rounded-3xl border border-[#2D3139] shadow-2xl flex flex-col items-center max-w-sm w-full text-center">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center mb-4 animate-pulse">
+              <RefreshCw className="w-6 h-6 animate-spin" />
+            </div>
+            <h3 className="text-lg font-bold text-white mb-2">Generating Document...</h3>
+            <p className="text-sm text-slate-400">Please wait while the PDF is being compiled.</p>
+          </div>
+        </div>
+      )}
+
       {/* Top Admin Navigation Bar */}
       <header className="sticky top-0 z-40 bg-[#1A1C23]/95 backdrop-blur-md border-b border-[#2D3139] px-4 sm:px-8 py-3.5 shadow-xl">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">

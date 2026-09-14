@@ -45,9 +45,9 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
 
   if (!isOpen || !doc) return null;
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     try {
-      doc.save(filename);
+      await shareOrDownloadPDF(doc, filename, title);
     } catch (e) {
       console.error('Download error:', e);
     }
@@ -55,13 +55,22 @@ export const PDFPreviewModal: React.FC<PDFPreviewModalProps> = ({
 
   const handleOpenInNewTab = () => {
     if (pdfUrl) {
-      window.open(pdfUrl, '_blank');
+      // Create a temporary anchor to safely open without forcing current window navigation
+      const a = document.createElement('a');
+      a.href = pdfUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.click();
     } else {
       try {
         const blobUrl = doc.output('bloburl');
-        window.open(blobUrl, '_blank');
+        const a = document.createElement('a');
+        a.href = blobUrl.toString();
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.click();
       } catch (e) {
-        doc.save(filename);
+        handleDownload();
       }
     }
   };

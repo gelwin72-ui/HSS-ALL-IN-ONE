@@ -72,6 +72,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const [previewDoc, setPreviewDoc] = useState<jsPDF | null>(null);
   const [previewTitle, setPreviewTitle] = useState('');
   const [previewFilename, setPreviewFilename] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
 
   // Attendance History Export Modal state
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -82,6 +83,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   const [exportToDate, setExportToDate] = useState<string>('');
 
   const handleGenerateCustomAttendancePDF = () => {
+    if (isGenerating) return;
+
     let fromD = exportFromDate;
     let toD = exportToDate;
     let periodLabel = 'All Time Recorded Days';
@@ -104,34 +107,42 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
       periodLabel = `Custom Period (${fromD || 'Start'} to ${toD || 'End'})`;
     }
 
-    const pdf = generateAttendanceHistoryPDF(
-      school,
-      classInfo,
-      teacher,
-      students,
-      attendanceRecords,
-      {
-        reportType: exportReportType,
-        selectedStudentId: exportStudentId || (students[0]?.id || ''),
-        fromDate: fromD,
-        toDate: toD,
-        periodLabel
-      }
-    );
-
-    const selStudent = students.find(s => s.id === exportStudentId);
-    const title = exportReportType === 'individual'
-      ? `Attendance History - ${selStudent ? selStudent.name : 'Student'}`
-      : `Classroom Attendance History Report`;
-
-    const filename = exportReportType === 'individual'
-      ? `${selStudent ? selStudent.name.replace(/\s+/g, '_') : 'Student'}_Attendance_History.pdf`
-      : `${classInfo.className.replace(/\s+/g, '_')}_Attendance_History.pdf`;
-
-    setPreviewTitle(title);
-    setPreviewFilename(filename);
-    setPreviewDoc(pdf);
+    setIsGenerating(true);
     setIsExportModalOpen(false);
+
+    setTimeout(() => {
+      try {
+        const pdf = generateAttendanceHistoryPDF(
+          school,
+          classInfo,
+          teacher,
+          students,
+          attendanceRecords,
+          {
+            reportType: exportReportType,
+            selectedStudentId: exportStudentId || (students[0]?.id || ''),
+            fromDate: fromD,
+            toDate: toD,
+            periodLabel
+          }
+        );
+
+        const selStudent = students.find(s => s.id === exportStudentId);
+        const title = exportReportType === 'individual'
+          ? `Attendance History - ${selStudent ? selStudent.name : 'Student'}`
+          : `Classroom Attendance History Report`;
+
+        const filename = exportReportType === 'individual'
+          ? `${selStudent ? selStudent.name.replace(/\s+/g, '_') : 'Student'}_Attendance_History.pdf`
+          : `${classInfo.className.replace(/\s+/g, '_')}_Attendance_History.pdf`;
+
+        setPreviewTitle(title);
+        setPreviewFilename(filename);
+        setPreviewDoc(pdf);
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 50);
   };
 
   // Delete confirm dialog
@@ -279,34 +290,65 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   };
 
   const handleExportAbsentPDF = () => {
-    const currentRec = attendanceRecords.find(r => r.date === selectedDate) || {
-      id: 'preview',
-      date: selectedDate,
-      presentStudentIds: presentStudents.map(s => s.id),
-      absentStudentIds: absentStudents.map(s => s.id),
-      savedAt: new Date().toISOString()
-    };
+    if (isGenerating) return;
+    setIsGenerating(true);
+    
+    setTimeout(() => {
+      try {
+        const currentRec = attendanceRecords.find(r => r.date === selectedDate) || {
+          id: 'preview',
+          date: selectedDate,
+          presentStudentIds: presentStudents.map(s => s.id),
+          absentStudentIds: absentStudents.map(s => s.id),
+          savedAt: new Date().toISOString()
+        };
 
-    const doc = generateAbsentReportPDF(school, classInfo, teacher, selectedDate, students, currentRec);
-    setPreviewDoc(doc);
-    setPreviewTitle(`Absent Students Report - ${selectedDate}`);
-    setPreviewFilename(`${classInfo.className.replace(/[^a-zA-Z0-9]/g, '_')}_Absent_List_${selectedDate}.pdf`);
+        const doc = generateAbsentReportPDF(school, classInfo, teacher, selectedDate, students, currentRec);
+        setPreviewDoc(doc);
+        setPreviewTitle(`Absent Students Report - ${selectedDate}`);
+        setPreviewFilename(`${classInfo.className.replace(/[^a-zA-Z0-9]/g, '_')}_Absent_List_${selectedDate}.pdf`);
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 50);
   };
 
   const handleExportMonthlyPDF = () => {
-    const [yearStr, monthStr] = selectedMonth.split('-');
-    const year = parseInt(yearStr, 10);
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-    const monthName = monthNames[parseInt(monthStr, 10) - 1] || 'Month';
+    if (isGenerating) return;
+    setIsGenerating(true);
+    
+    setTimeout(() => {
+      try {
+        const [yearStr, monthStr] = selectedMonth.split('-');
+        const year = parseInt(yearStr, 10);
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        const monthName = monthNames[parseInt(monthStr, 10) - 1] || 'Month';
 
-    const doc = generateMonthlyAttendancePDF(school, classInfo, teacher, monthName, year, students, attendanceRecords);
-    setPreviewDoc(doc);
-    setPreviewTitle(`Monthly Attendance Register - ${monthName} ${year}`);
-    setPreviewFilename(`${classInfo.className.replace(/[^a-zA-Z0-9]/g, '_')}_Attendance_${monthName}_${year}.pdf`);
+        const doc = generateMonthlyAttendancePDF(school, classInfo, teacher, monthName, year, students, attendanceRecords);
+        setPreviewDoc(doc);
+        setPreviewTitle(`Monthly Attendance Register - ${monthName} ${year}`);
+        setPreviewFilename(`${classInfo.className.replace(/[^a-zA-Z0-9]/g, '_')}_Attendance_${monthName}_${year}.pdf`);
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 50);
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-16 animate-fade-in">
+    <div className="max-w-6xl mx-auto space-y-6 pb-16 animate-fade-in relative">
+      {/* Loading Overlay for PDF Generation */}
+      {isGenerating && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#1A1C23] p-6 rounded-3xl border border-[#2D3139] shadow-2xl flex flex-col items-center max-w-sm w-full text-center">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center mb-4 animate-pulse">
+              <RefreshCw className="w-6 h-6 animate-spin" />
+            </div>
+            <h3 className="text-lg font-bold text-white mb-2">Generating Document...</h3>
+            <p className="text-sm text-slate-400">Please wait while the PDF is being compiled.</p>
+          </div>
+        </div>
+      )}
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

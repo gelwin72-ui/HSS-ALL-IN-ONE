@@ -11,7 +11,8 @@ import {
   School,
   Sparkles,
   CheckCircle2,
-  Eye
+  Eye,
+  RefreshCw
 } from 'lucide-react';
 import {
   SchoolProfile,
@@ -65,65 +66,119 @@ export const ReportsScreen: React.FC<ReportsScreenProps> = ({
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [selectedStudentId, setSelectedStudentId] = useState<string>(safeStudents.length > 0 ? safeStudents[0].id : '');
+  const [isGenerating, setIsGenerating] = useState<string | null>(null);
 
   const sortedStudents = [...safeStudents].sort((a, b) => (a?.rollNo || 0) - (b?.rollNo || 0));
 
   // 1. Export All Application Data PDF
   const handleExportAllData = () => {
-    const doc = generateFullSchoolDataPDF(school, classInfo, teacher, students, attendance, exams, examMarksMap);
-    setPreviewDoc(doc);
-    setPreviewTitle('Comprehensive Class Dossier & Master Report');
-    const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
-    setPreviewFilename(`${safeClassName}_Master_Dossier.pdf`);
+    if (isGenerating) return;
+    setIsGenerating('all-data');
+    setTimeout(() => {
+      try {
+        const doc = generateFullSchoolDataPDF(school, classInfo, teacher, students, attendance, exams, examMarksMap);
+        setPreviewDoc(doc);
+        setPreviewTitle('Comprehensive Class Dossier & Master Report');
+        const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
+        setPreviewFilename(`${safeClassName}_Master_Dossier.pdf`);
+      } finally {
+        setIsGenerating(null);
+      }
+    }, 50);
   };
 
   // 2. Export Exam Tabulation PDF
   const handleExportExamReport = () => {
+    if (isGenerating) return;
     const targetExam = exams.find(e => e.id === selectedExamId) || exams[0];
     if (!targetExam) return;
 
-    const doc = generateExamReportPDF(school, classInfo, teacher, targetExam, students, examMarksMap[targetExam.id]);
-    setPreviewDoc(doc);
-    setPreviewTitle(`Full Exam Tabulation: ${targetExam.name || 'Exam'}`);
-    const safeExamName = (targetExam.name || 'Exam').replace(/[^a-zA-Z0-9]/g, '_');
-    setPreviewFilename(`${safeExamName}_Tabulation.pdf`);
+    setIsGenerating('exam-report');
+    setTimeout(() => {
+      try {
+        const doc = generateExamReportPDF(school, classInfo, teacher, targetExam, students, examMarksMap[targetExam.id]);
+        setPreviewDoc(doc);
+        setPreviewTitle(`Full Exam Tabulation: ${targetExam.name || 'Exam'}`);
+        const safeExamName = (targetExam.name || 'Exam').replace(/[^a-zA-Z0-9]/g, '_');
+        setPreviewFilename(`${safeExamName}_Tabulation.pdf`);
+      } finally {
+        setIsGenerating(null);
+      }
+    }, 50);
   };
 
   // 3. Export Monthly Attendance PDF
   const handleExportMonthlyAttendance = () => {
-    const doc = generateMonthlyAttendancePDF(school, classInfo, teacher, selectedMonthName, selectedYear, students, attendance);
-    setPreviewDoc(doc);
-    setPreviewTitle(`Class Monthly Attendance Report - ${selectedMonthName} ${selectedYear}`);
-    const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
-    setPreviewFilename(`${safeClassName}_Attendance_${selectedMonthName}_${selectedYear}.pdf`);
+    if (isGenerating) return;
+    setIsGenerating('monthly-attendance');
+    setTimeout(() => {
+      try {
+        const doc = generateMonthlyAttendancePDF(school, classInfo, teacher, selectedMonthName, selectedYear, students, attendance);
+        setPreviewDoc(doc);
+        setPreviewTitle(`Class Monthly Attendance Report - ${selectedMonthName} ${selectedYear}`);
+        const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
+        setPreviewFilename(`${safeClassName}_Attendance_${selectedMonthName}_${selectedYear}.pdf`);
+      } finally {
+        setIsGenerating(null);
+      }
+    }, 50);
   };
 
   // 3b. Export Complete Class Attendance History PDF
   const handleExportAttendanceHistory = () => {
-    const doc = generateAttendanceHistoryPDF(school, classInfo, teacher, students, attendance, {
-      reportType: 'class',
-      periodLabel: 'Complete Recorded Attendance History'
-    });
-    setPreviewDoc(doc);
-    setPreviewTitle(`Complete Attendance History Report`);
-    const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
-    setPreviewFilename(`${safeClassName}_Complete_Attendance_History.pdf`);
+    if (isGenerating) return;
+    setIsGenerating('attendance-history');
+    setTimeout(() => {
+      try {
+        const doc = generateAttendanceHistoryPDF(school, classInfo, teacher, students, attendance, {
+          reportType: 'class',
+          periodLabel: 'Complete Recorded Attendance History'
+        });
+        setPreviewDoc(doc);
+        setPreviewTitle(`Complete Attendance History Report`);
+        const safeClassName = (classInfo?.className || 'Class').replace(/[^a-zA-Z0-9]/g, '_');
+        setPreviewFilename(`${safeClassName}_Complete_Attendance_History.pdf`);
+      } finally {
+        setIsGenerating(null);
+      }
+    }, 50);
   };
 
   // 4. Export Individual Student Performance Report PDF
   const handleExportStudentProgress = () => {
+    if (isGenerating) return;
     const targetStudent = students.find(s => s.id === selectedStudentId) || sortedStudents[0];
     if (!targetStudent) return;
 
-    const doc = generateStudentProgressReportPDF(school, classInfo, teacher, targetStudent, exams, examMarksMap, attendance);
-    setPreviewDoc(doc);
-    setPreviewTitle(`Student Progress Report: ${targetStudent.name || 'Student'}`);
-    const safeStudentName = (targetStudent.name || 'Student').replace(/[^a-zA-Z0-9]/g, '_');
-    setPreviewFilename(`ReportCard_Roll${targetStudent.rollNo || 0}_${safeStudentName}.pdf`);
+    setIsGenerating('student-progress');
+    setTimeout(() => {
+      try {
+        const doc = generateStudentProgressReportPDF(school, classInfo, teacher, targetStudent, exams, examMarksMap, attendance);
+        setPreviewDoc(doc);
+        setPreviewTitle(`Student Progress Report: ${targetStudent.name || 'Student'}`);
+        const safeStudentName = (targetStudent.name || 'Student').replace(/[^a-zA-Z0-9]/g, '_');
+        setPreviewFilename(`ReportCard_Roll${targetStudent.rollNo || 0}_${safeStudentName}.pdf`);
+      } finally {
+        setIsGenerating(null);
+      }
+    }, 50);
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-16 animate-fade-in">
+    <div className="max-w-6xl mx-auto space-y-6 pb-16 animate-fade-in relative">
+      {/* Loading Overlay for PDF Generation */}
+      {isGenerating && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#1A1C23] p-6 rounded-3xl border border-[#2D3139] shadow-2xl flex flex-col items-center max-w-sm w-full text-center">
+            <div className="w-12 h-12 rounded-2xl bg-purple-500/20 text-purple-400 flex items-center justify-center mb-4 animate-pulse">
+              <RefreshCw className="w-6 h-6 animate-spin" />
+            </div>
+            <h3 className="text-lg font-bold text-white mb-2">Generating PDF...</h3>
+            <p className="text-sm text-slate-400">Please wait while the official document is being compiled. This may take a moment for large datasets.</p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

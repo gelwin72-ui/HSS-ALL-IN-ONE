@@ -312,13 +312,23 @@ export const ExamsScreen: React.FC<ExamsScreenProps> = ({
     }
   };
 
+  const [isGenerating, setIsGenerating] = useState(false);
+
   // Export PDF
   const handleExportPDF = () => {
-    if (!loadedExam) return;
-    const doc = generateExamReportPDF(school, classInfo, teacher, loadedExam, students, examMarksMap[loadedExam.id]);
-    setPreviewDoc(doc);
-    setPreviewTitle(`Exam Tabulation Sheet: ${loadedExam.name}`);
-    setPreviewFilename(`${loadedExam.name.replace(/[^a-zA-Z0-9]/g, '_')}_Marksheet.pdf`);
+    if (!loadedExam || isGenerating) return;
+    setIsGenerating(true);
+    
+    setTimeout(() => {
+      try {
+        const doc = generateExamReportPDF(school, classInfo, teacher, loadedExam, students, examMarksMap[loadedExam.id]);
+        setPreviewDoc(doc);
+        setPreviewTitle(`Exam Tabulation Sheet: ${loadedExam.name}`);
+        setPreviewFilename(`${loadedExam.name.replace(/[^a-zA-Z0-9]/g, '_')}_Marksheet.pdf`);
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 50);
   };
 
   // Compute live ranking & class metrics for loaded exam
@@ -327,7 +337,20 @@ export const ExamsScreen: React.FC<ExamsScreenProps> = ({
     : null;
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 pb-16 animate-fade-in">
+    <div className="max-w-7xl mx-auto space-y-6 pb-16 animate-fade-in relative">
+      {/* Loading Overlay for PDF Generation */}
+      {isGenerating && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[#1A1C23] p-6 rounded-3xl border border-[#2D3139] shadow-2xl flex flex-col items-center max-w-sm w-full text-center">
+            <div className="w-12 h-12 rounded-2xl bg-orange-500/20 text-orange-400 flex items-center justify-center mb-4 animate-pulse">
+              <RefreshCw className="w-6 h-6 animate-spin" />
+            </div>
+            <h3 className="text-lg font-bold text-white mb-2">Compiling Marks Tabulation...</h3>
+            <p className="text-sm text-slate-400">Please wait while the official PDF is being generated.</p>
+          </div>
+        </div>
+      )}
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

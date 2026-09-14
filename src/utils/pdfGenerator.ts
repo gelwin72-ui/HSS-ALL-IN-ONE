@@ -578,27 +578,55 @@ export async function shareOrDownloadPDF(doc: jsPDF, filename: string, title: st
     const pdfBlob = doc.output('blob');
     const file = new File([pdfBlob], filename, { type: 'application/pdf' });
 
+    // 1. Priority: Web Share API (Safest for Android WebViews & AppsGeyser to bypass native DownloadManager crashes)
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({
-        title: title,
-        text: fallbackText || `HSS ALL IN ONE - ${title}`,
-        files: [file]
-      });
-      return true;
+      try {
+        await navigator.share({
+          title: title,
+          text: fallbackText || `HSS ALL IN ONE - ${title}`,
+          files: [file]
+        });
+        return true;
+      } catch (shareErr: any) {
+        if (shareErr.name === 'AbortError') return true; // User intentionally cancelled
+        console.warn('Share API failed, falling back to safe download:', shareErr);
+      }
     } else if (navigator.share) {
-      await navigator.share({
-        title: title,
-        text: fallbackText || `HSS ALL IN ONE - ${title}`,
-      });
-      doc.save(filename);
-      return true;
-    } else {
-      doc.save(filename);
-      return true;
+      try {
+        await navigator.share({
+          title: title,
+          text: fallbackText || `HSS ALL IN ONE - ${title}`,
+        });
+        // If file sharing is not supported but text sharing is, we still proceed to download fallback
+      } catch (shareErr: any) {
+        if (shareErr.name === 'AbortError') return true;
+      }
     }
+
+    // 2. Safe Fallback Download (Creates object URL, clicks, and cleans up safely without window.open or location.href)
+    const url = window.URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    
+    // Clean up safely to prevent memory leaks and without closing the app
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 1000);
+    
+    return true;
+
   } catch (err: any) {
-    if (err.name !== 'AbortError') {
+    console.error('PDF generation/download error:', err);
+    // Absolute fallback if Blob handling completely fails
+    try {
       doc.save(filename);
+    } catch (saveErr) {
+      console.error('doc.save fallback also failed:', saveErr);
     }
     return true;
   }
