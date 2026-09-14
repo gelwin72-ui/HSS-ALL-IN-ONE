@@ -1255,6 +1255,36 @@ class CloudSyncManager {
     return true;
   }
 
+  public async syncAllTeacherClassesToSchool(schoolCode: string, teacherId?: string, teacherEmail?: string): Promise<void> {
+    if (!schoolCode) return;
+    const cleanCode = schoolCode.trim().toUpperCase();
+    const localClasses = StorageService.getClassesList();
+    const cleanEmail = (teacherEmail || '').trim().toLowerCase();
+
+    for (const cls of localClasses) {
+      if (!cls || !cls.id) continue;
+      const isOwner = (
+        (teacherId && (cls.createdByTeacherId === teacherId || cls.teacherId === teacherId || cls.teacherUid === teacherId)) ||
+        (cleanEmail && cls.createdByTeacherEmail && cls.createdByTeacherEmail.trim().toLowerCase() === cleanEmail) ||
+        cls.isTeacherCreated
+      );
+
+      if (isOwner) {
+        const enrichedClass: ClassItem = {
+          ...cls,
+          schoolCode: cleanCode,
+          isTeacherCreated: true,
+          createdByTeacherId: cls.createdByTeacherId || cls.teacherId || teacherId || '',
+          teacherId: cls.teacherId || cls.createdByTeacherId || teacherId || '',
+          teacherUid: cls.teacherUid || teacherId || cls.createdByTeacherId || cls.teacherId || '',
+          createdByTeacherEmail: cls.createdByTeacherEmail || cleanEmail || ''
+        };
+        const studs = StorageService.getStudents(cls.id);
+        await this.saveClassToSchool(cleanCode, enrichedClass, studs).catch(() => {});
+      }
+    }
+  }
+
   public async deleteClassFromSchool(schoolCode: string, classId: string): Promise<boolean> {
     if (!schoolCode || !classId) return false;
     const cleanCode = schoolCode.trim().toUpperCase();

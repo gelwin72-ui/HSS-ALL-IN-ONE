@@ -91,11 +91,42 @@
   body {
     background: white !important;
     color: black !important;
-    font-size: 11pt;
+    font-size: 10pt !important;
   }
 
-  .no-print {
+  .no-print,
+  button,
+  header:not(#printable-audit-report header),
+  nav,
+  .backdrop-blur-md,
+  .no-print-area {
     display: none !important;
+  }
+
+  #printable-audit-report-overlay {
+    position: static !important;
+    display: block !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+  }
+
+  #printable-audit-report {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: white !important;
+    color: #0f172a !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
   }
 
   .print-only {
@@ -112,3 +143,4 @@
     margin: 1.2cm 1cm;
   }
 }
+

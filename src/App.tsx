@@ -215,6 +215,7 @@ export function App() {
       assignedClass: account.assignedClass,
       subject: account.subject || account.primarySubject
     }).catch(() => {});
+    CloudSync.syncAllTeacherClassesToSchool(schoolCode, uid, account.email || account.gmail).catch(() => {});
     showToast(`Welcome, ${account.name}! Multi-device sync active.`, 'success');
   };
 
@@ -773,7 +774,10 @@ export function App() {
           handleSaveReminders(updated);
         }}
         onDeleteReminder={(id) => {
-          const updated = reminders.filter(r => r.id !== id);
+          StorageService.dismissNotificationForTeacher(id);
+          const rawId = id.startsWith('rem-broadcast-') ? id.replace('rem-broadcast-', '') : id;
+          StorageService.dismissNotificationForTeacher(rawId);
+          const updated = reminders.filter(r => r.id !== id && r.id !== rawId);
           handleSaveReminders(updated);
         }}
       />

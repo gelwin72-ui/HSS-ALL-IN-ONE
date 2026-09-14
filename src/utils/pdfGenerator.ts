@@ -819,3 +819,211 @@ export function generateAttendanceHistoryPDF(
   addFooter(doc, teacher, school.principalName);
   return doc;
 }
+
+// -------------------------------------------------------------
+// SCHOOL ADMIN PDF EXPORT SUITE (VALID STANDALONE PDFs)
+// -------------------------------------------------------------
+
+export function generateSchoolAdminAuditPDF(
+  school: SchoolProfile,
+  admin: { adminName?: string; email?: string; schoolCode?: string },
+  teachers: any[],
+  classesList: any[],
+  metrics: {
+    totalStudents: number;
+    overallAttendanceRate: number;
+    overallAcademicAverage?: number;
+  }
+): jsPDF {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  // Top header banner
+  doc.setFillColor(...PRIMARY_COLOR);
+  doc.rect(0, 0, pageWidth, 26, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text(school.schoolName || "St. Sebastian's Higher Secondary School", pageWidth / 2, 11, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  const subText = [
+    school.schoolAddress,
+    admin.schoolCode || school.schoolCode ? `School Code: ${admin.schoolCode || school.schoolCode}` : '',
+    school.schoolPhone ? `Ph: ${school.schoolPhone}` : ''
+  ].filter(Boolean).join('  •  ');
+  doc.text(subText, pageWidth / 2, 18, { align: 'center' });
+
+  // Sub-bar
+  doc.setFillColor(241, 245, 249);
+  doc.rect(14, 30, pageWidth - 28, 12, 'F');
+  doc.setDrawColor(203, 213, 225);
+  doc.rect(14, 30, pageWidth - 28, 12, 'S');
+
+  doc.setTextColor(...SECONDARY_COLOR);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text(`CONSOLIDATED INSTITUTIONAL AUDIT & TEACHER DIRECTORY`, 18, 38);
+  doc.text(`DATE: ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}`, pageWidth - 18, 38, { align: 'right' });
+
+  // Summary Metrics Box
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...PRIMARY_COLOR);
+  doc.text('INSTITUTIONAL PERFORMANCE SUMMARY', 14, 50);
+
+  const metricsData = [
+    ['Total Registered Teachers', teachers.length.toString()],
+    ['Active Classrooms', classesList.length.toString()],
+    ['Total Enrolled Students', metrics.totalStudents.toString()],
+    ['Overall Attendance Rate', `${metrics.overallAttendanceRate}%`],
+    ['Academic Average Performance', `${metrics.overallAcademicAverage || 0}%`]
+  ];
+
+  autoTable(doc, {
+    startY: 54,
+    body: metricsData,
+    theme: 'plain',
+    styles: { fontSize: 9, cellPadding: 2 },
+    columnStyles: {
+      0: { fontStyle: 'bold', textColor: SECONDARY_COLOR, cellWidth: 70 },
+      1: { halign: 'right', fontStyle: 'bold', textColor: PRIMARY_COLOR }
+    },
+    margin: { left: 14, right: 14 }
+  });
+
+  const nextY = (doc as any).lastAutoTable.finalY + 8;
+
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...PRIMARY_COLOR);
+  doc.text('ASSOCIATED TEACHERS & ASSIGNED CLASSROOMS', 14, nextY);
+
+  const teacherRows = teachers.map((t, idx) => [
+    (idx + 1).toString(),
+    t.name || 'Teacher',
+    t.designation || 'Faculty',
+    t.subject || t.primarySubject || 'General',
+    t.assignedClass || '—',
+    t.phone || '—',
+    t.status === 'inactive' ? 'Inactive' : 'Active'
+  ]);
+
+  autoTable(doc, {
+    startY: nextY + 4,
+    head: [['#', 'Teacher Name', 'Designation', 'Subject', 'Assigned Class', 'Phone', 'Status']],
+    body: teacherRows.length > 0 ? teacherRows : [['-', 'No teachers registered', '-', '-', '-', '-', '-']],
+    theme: 'grid',
+    styles: { fontSize: 8.5, halign: 'center', cellPadding: 2.5 },
+    headStyles: { fillColor: SECONDARY_COLOR, textColor: [255, 255, 255], fontStyle: 'bold' },
+    columnStyles: { 1: { halign: 'left', fontStyle: 'bold' }, 4: { halign: 'left' } },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    margin: { left: 14, right: 14, bottom: 30 }
+  });
+
+  // Footer signature
+  const pageHeight = doc.internal.pageSize.getHeight();
+  doc.setDrawColor(203, 213, 225);
+  doc.setLineWidth(0.5);
+  doc.line(pageWidth - 80, pageHeight - 24, pageWidth - 14, pageHeight - 24);
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...SECONDARY_COLOR);
+  doc.text(`Principal / School Head (${admin.adminName || 'Authorized Signatory'})`, pageWidth - 80, pageHeight - 19);
+
+  return doc;
+}
+
+export function generateSchoolAdminStudentsPDF(
+  school: SchoolProfile,
+  admin: { adminName?: string; email?: string; schoolCode?: string },
+  students: any[]
+): jsPDF {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  doc.setFillColor(...PRIMARY_COLOR);
+  doc.rect(0, 0, pageWidth, 24, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.text(school.schoolName || "St. Sebastian's Higher Secondary School", pageWidth / 2, 10, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text(`School Code: ${admin.schoolCode || school.schoolCode || ''}  •  CONSOLIDATED STUDENTS ROSTER`, pageWidth / 2, 17, { align: 'center' });
+
+  const studentRows = students.map((s, idx) => [
+    (idx + 1).toString(),
+    s.admissionNo || s.rollNo || '-',
+    s.name || '-',
+    s.className || `${s.standard || ''} ${s.stream || ''} ${s.section || ''}`.trim() || '-',
+    s.gender ? s.gender.toUpperCase() : '-',
+    s.parentPhone || s.phone || '-',
+    s.attendancePercentage !== undefined ? `${s.attendancePercentage}%` : '—'
+  ]);
+
+  autoTable(doc, {
+    startY: 28,
+    head: [['#', 'Adm / Roll', 'Student Name', 'Classroom', 'Gender', 'Contact Phone', 'Att %']],
+    body: studentRows.length > 0 ? studentRows : [['-', '-', 'No students enrolled', '-', '-', '-', '-']],
+    theme: 'grid',
+    styles: { fontSize: 8, halign: 'center', cellPadding: 2 },
+    headStyles: { fillColor: SECONDARY_COLOR, textColor: [255, 255, 255], fontStyle: 'bold' },
+    columnStyles: { 2: { halign: 'left', fontStyle: 'bold' } },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    margin: { left: 14, right: 14, bottom: 20 }
+  });
+
+  return doc;
+}
+
+export function generateSchoolAdminTeachersPDF(
+  school: SchoolProfile,
+  admin: { adminName?: string; email?: string; schoolCode?: string },
+  teachers: any[]
+): jsPDF {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  doc.setFillColor(...PRIMARY_COLOR);
+  doc.rect(0, 0, pageWidth, 24, 'F');
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.text(school.schoolName || "St. Sebastian's Higher Secondary School", pageWidth / 2, 10, { align: 'center' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text(`School Code: ${admin.schoolCode || school.schoolCode || ''}  •  FACULTY & TEACHER DIRECTORY`, pageWidth / 2, 17, { align: 'center' });
+
+  const teacherRows = teachers.map((t, idx) => [
+    (idx + 1).toString(),
+    t.name || 'Teacher',
+    t.email || t.gmail || '-',
+    t.subject || t.primarySubject || 'General',
+    t.assignedClass || '—',
+    t.dob || '—',
+    t.phone || '—',
+    t.status === 'inactive' ? 'Inactive' : 'Active'
+  ]);
+
+  autoTable(doc, {
+    startY: 28,
+    head: [['#', 'Teacher Name', 'Email', 'Subject', 'Class Assigned', 'DOB', 'Phone', 'Status']],
+    body: teacherRows.length > 0 ? teacherRows : [['-', 'No teachers registered', '-', '-', '-', '-', '-', '-']],
+    theme: 'grid',
+    styles: { fontSize: 8, halign: 'center', cellPadding: 2 },
+    headStyles: { fillColor: SECONDARY_COLOR, textColor: [255, 255, 255], fontStyle: 'bold' },
+    columnStyles: { 1: { halign: 'left', fontStyle: 'bold' } },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    margin: { left: 14, right: 14, bottom: 20 }
+  });
+
+  return doc;
+}
+

@@ -79,6 +79,11 @@ import {
 import { StorageService, DEFAULT_PERIOD_TIMINGS, TIMETABLE_DAYS, registerStorageMutationListener } from '../utils/storage';
 import { db, database, ref, update, doc, setDoc, handleFirestoreError, OperationType } from '../utils/firebase';
 import { CloudSync } from '../utils/cloudSync';
+import {
+  generateSchoolAdminAuditPDF,
+  generateSchoolAdminStudentsPDF,
+  generateSchoolAdminTeachersPDF
+} from '../utils/pdfGenerator';
 
 interface SchoolAdminDashboardScreenProps {
   admin: SchoolAdminAccount;
@@ -846,6 +851,60 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     showToast(`Complete School Backup exported (${filename})`);
   };
 
+  const handleExportAuditPDF = () => {
+    try {
+      const doc = generateSchoolAdminAuditPDF(
+        schoolProfile,
+        admin,
+        teachers,
+        classesList,
+        {
+          totalStudents: crossClassData.totalStudents,
+          overallAttendanceRate: crossClassData.overallAttendanceRate,
+          overallAcademicAverage: crossClassData.overallAcademicAverage
+        }
+      );
+      const filename = `Consolidated_School_Audit_${admin.schoolCode || 'SSHSS'}_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(filename);
+      showToast(`Consolidated Audit PDF downloaded (${filename})!`);
+    } catch (e) {
+      console.error('PDF export error:', e);
+      showToast('Error generating Audit PDF. Please try again.');
+    }
+  };
+
+  const handleExportStudentsPDF = () => {
+    try {
+      const doc = generateSchoolAdminStudentsPDF(
+        schoolProfile,
+        admin,
+        crossClassData.allStudentsList
+      );
+      const filename = `Students_Roster_${admin.schoolCode || 'SSHSS'}_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(filename);
+      showToast(`Students Roster PDF downloaded (${filename})!`);
+    } catch (e) {
+      console.error('PDF export error:', e);
+      showToast('Error generating Students PDF.');
+    }
+  };
+
+  const handleExportTeachersPDF = () => {
+    try {
+      const doc = generateSchoolAdminTeachersPDF(
+        schoolProfile,
+        admin,
+        teachers
+      );
+      const filename = `Teacher_Directory_${admin.schoolCode || 'SSHSS'}_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(filename);
+      showToast(`Teacher Directory PDF downloaded (${filename})!`);
+    } catch (e) {
+      console.error('PDF export error:', e);
+      showToast('Error generating Teachers PDF.');
+    }
+  };
+
   const handleExportStudentsCsv = () => {
     const headers = ['Roll No', 'Admission No', 'Student Name', 'Gender', 'Class & Division', 'Parent/Guardian Phone', 'Attendance %'];
     const rows = crossClassData.allStudentsList.map(s => [
@@ -1021,6 +1080,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       showToast(`New teacher ${newTeach.name} registered under school ${admin.schoolCode || 'SSHSS@111213'}!`);
     }
     setIsTeacherModalOpen(false);
+    setActiveTab('teachers-info');
     triggerRefresh();
   };
 
@@ -2679,9 +2739,23 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                       {b.message}
                     </p>
 
-                    <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-[#2D3139]">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 pt-2 border-t border-[#2D3139]">
                       <span>Issued by: <strong className="text-slate-400">{b.senderName}</strong></span>
-                      <span>Target: <strong className="text-amber-400">{b.targetAudience || 'All Teachers'}</strong></span>
+                      <div className="flex items-center gap-3">
+                        <span>Target: <strong className="text-amber-400">{b.targetAudience || 'All Teachers'}</strong></span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm(`Delete broadcast "${b.title}"? This will remove it from the admin console and stop showing on teacher dashboards.`)) {
+                              handleDeleteBroadcast(b.id);
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 transition text-[11px] font-bold flex items-center gap-1.5 cursor-pointer active:scale-95"
+                        >
+                          <Trash2 className="w-3 h-3 text-rose-400" />
+                          <span>Delete Message</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -3424,17 +3498,68 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
               {/* Export Actions */}
               <div className="space-y-3">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                  Export Institutional Backups
+                  Export Institutional Backups & PDF Reports
                 </h4>
                 
                 <div className="space-y-2.5">
+                  <button
+                    type="button"
+                    onClick={handleExportAuditPDF}
+                    className="w-full p-3.5 rounded-2xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] text-left flex items-center justify-between transition group cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 group-hover:bg-amber-500/20 transition">
+                        <Printer className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h5 className="text-xs font-bold text-white">Export Consolidated School Audit Report (PDF)</h5>
+                        <p className="text-[11px] text-slate-400">Official institutional compliance audit with principal signature section.</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExportStudentsPDF}
+                    className="w-full p-3.5 rounded-2xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] text-left flex items-center justify-between transition group cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 group-hover:bg-purple-500/20 transition">
+                        <FileText className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h5 className="text-xs font-bold text-white">Export Consolidated Students Roster (PDF)</h5>
+                        <p className="text-[11px] text-slate-400">Formatted printable PDF table of all enrolled students.</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExportTeachersPDF}
+                    className="w-full p-3.5 rounded-2xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] text-left flex items-center justify-between transition group cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20 transition">
+                        <Users className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h5 className="text-xs font-bold text-white">Export Teacher Directory & Birthdays (PDF)</h5>
+                        <p className="text-[11px] text-slate-400">Printable official faculty list with subjects, classes, and contact details.</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-500" />
+                  </button>
+
                   <button
                     type="button"
                     onClick={handleExportFullJson}
                     className="w-full p-3.5 rounded-2xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] text-left flex items-center justify-between transition group cursor-pointer"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 group-hover:bg-amber-500/20 transition">
+                      <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 group-hover:bg-blue-500/20 transition">
                         <Download className="w-5 h-5" />
                       </div>
                       <div>
@@ -4487,8 +4612,8 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
       {/* CONSOLIDATED INSTITUTIONAL AUDIT REPORT MODAL (PRINTABLE) */}
       {showPrintModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in">
-          <div className="w-full max-w-3xl bg-white text-slate-900 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
+        <div id="printable-audit-report-overlay" className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in">
+          <div id="printable-audit-report" className="w-full max-w-3xl bg-white text-slate-900 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between border-b border-slate-200 pb-4">
               <div className="space-y-1">
                 <span className="text-[10px] font-extrabold uppercase tracking-widest text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300">
@@ -4503,7 +4628,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
               <button
                 type="button"
                 onClick={() => setShowPrintModal(false)}
-                className="p-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition cursor-pointer"
+                className="p-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition cursor-pointer no-print"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -4551,7 +4676,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                       <td className="py-2 px-3 font-semibold text-slate-800">{t.assignedClass || '-'}</td>
                       <td className="py-2 px-3 text-slate-600">{t.dob || '-'}</td>
                       <td className="py-2 px-3 font-mono text-slate-600">{t.phone}</td>
-                      <td className="py-2 px-3 text-emerald-700 font-bold text-right">✓ 100% Up to date</td>
+                      <td className="py-2 px-3 text-emerald-700 font-bold text-right">✓ Active & Up to date</td>
                     </tr>
                   ))}
                 </tbody>
@@ -4571,14 +4696,22 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
               </div>
             </div>
 
-            <div className="flex items-center gap-3 pt-2">
+            <div className="flex flex-wrap items-center gap-3 pt-2 no-print">
+              <button
+                type="button"
+                onClick={handleExportAuditPDF}
+                className="flex-1 min-w-[140px] py-3 rounded-xl bg-gradient-to-r from-amber-600 to-amber-700 text-white font-bold text-xs hover:from-amber-500 hover:to-amber-600 transition cursor-pointer flex items-center justify-center gap-2 shadow-lg active:scale-95"
+              >
+                <Download className="w-4 h-4" />
+                <span>Save as PDF (.pdf)</span>
+              </button>
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="flex-1 py-3 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition cursor-pointer flex items-center justify-center gap-2"
+                className="flex-1 min-w-[140px] py-3 rounded-xl bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition cursor-pointer flex items-center justify-center gap-2 shadow-lg active:scale-95"
               >
                 <Printer className="w-4 h-4" />
-                <span>Print / Save as PDF</span>
+                <span>Print Document</span>
               </button>
               <button
                 type="button"

@@ -115,6 +115,7 @@ export interface ClassItem {
   classStrength: number;
   createdAt: string;
   teacherId?: string;
+  teacherUid?: string;
   teacherName?: string;
   schoolCode?: string;
   isTeacherCreated?: boolean;

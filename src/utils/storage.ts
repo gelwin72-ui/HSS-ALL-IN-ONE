@@ -1186,15 +1186,52 @@ export const StorageService = {
     notifyMutation();
   },
 
+  getDismissedNotificationIds(teacherUid?: string, schoolCode?: string): string[] {
+    try {
+      const session = this.getAuthSession();
+      const effectiveTeacherId = teacherUid || session.currentTeacher?.uid || session.currentTeacher?.id || 'default_teacher';
+      const effectiveSchool = (schoolCode || session.currentTeacher?.schoolCode || this.getSchoolProfile().schoolCode || 'default_school').toUpperCase();
+      const key = `DISMISSED_NOTIFICATIONS_${effectiveSchool}_${effectiveTeacherId}`;
+      const val = localStorage.getItem(key);
+      return val ? JSON.parse(val) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  dismissNotificationForTeacher(notificationId: string, teacherUid?: string, schoolCode?: string) {
+    try {
+      const session = this.getAuthSession();
+      const effectiveTeacherId = teacherUid || session.currentTeacher?.uid || session.currentTeacher?.id || 'default_teacher';
+      const effectiveSchool = (schoolCode || session.currentTeacher?.schoolCode || this.getSchoolProfile().schoolCode || 'default_school').toUpperCase();
+      const key = `DISMISSED_NOTIFICATIONS_${effectiveSchool}_${effectiveTeacherId}`;
+      const dismissed = this.getDismissedNotificationIds(effectiveTeacherId, effectiveSchool);
+      if (!dismissed.includes(notificationId)) {
+        dismissed.push(notificationId);
+        localStorage.setItem(key, JSON.stringify(dismissed));
+      }
+    } catch {}
+  },
+
+  isNotificationDismissedForTeacher(notificationId: string, teacherUid?: string, schoolCode?: string): boolean {
+    const list = this.getDismissedNotificationIds(teacherUid, schoolCode);
+    return list.includes(notificationId);
+  },
+
   addPrincipalBroadcast(broadcast: PrincipalBroadcast) {
     const list = this.getPrincipalBroadcasts();
-    const updated = [broadcast, ...list];
+    const updated = [broadcast, ...list.filter(b => b.id !== broadcast.id)];
     this.savePrincipalBroadcasts(updated);
+
+    const broadcastReminderId = `rem-broadcast-${broadcast.id}`;
+    if (this.isNotificationDismissedForTeacher(broadcast.id) || this.isNotificationDismissedForTeacher(broadcastReminderId)) {
+      return;
+    }
 
     // Also push into Reminders so teacher dashboard and notification indicators update immediately
     const reminders = this.getReminders();
     const reminderEntry: Reminder = {
-      id: `rem-broadcast-${broadcast.id}`,
+      id: broadcastReminderId,
       title: `📢 Principal Directive: ${broadcast.title}`,
       description: `${broadcast.message} [Target: ${broadcast.targetAudience || 'All Teachers'}]`,
       date: broadcast.date || new Date().toISOString().split('T')[0],
@@ -1204,7 +1241,9 @@ export const StorageService = {
       isCompleted: false,
       createdAt: broadcast.createdAt || new Date().toISOString()
     };
-    this.saveReminders([reminderEntry, ...reminders]);
+    if (!reminders.some(r => r.id === reminderEntry.id)) {
+      this.saveReminders([reminderEntry, ...reminders]);
+    }
     notifyMutation();
   },
 
@@ -1212,6 +1251,11 @@ export const StorageService = {
     const list = this.getPrincipalBroadcasts();
     const updated = list.filter(b => b.id !== id);
     this.savePrincipalBroadcasts(updated);
+    const reminders = this.getReminders();
+    const filteredReminders = reminders.filter(r => r.id !== `rem-broadcast-${id}` && r.id !== id);
+    if (filteredReminders.length !== reminders.length) {
+      this.saveReminders(filteredReminders);
+    }
   },
 
   // Upcoming Teacher Birthdays Calculator
