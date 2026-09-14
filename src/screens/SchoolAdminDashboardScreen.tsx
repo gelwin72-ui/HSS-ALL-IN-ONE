@@ -337,9 +337,11 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
   // Load teachers for this school code (production Firebase Realtime Database is authoritative source of truth)
   const teachers = useMemo<TeacherAccount[]>(() => {
-    // When remote teachers are loaded or updated via Realtime Database listener
-    if (hasLoadedRemoteTeachers) {
-      return (remoteTeachers || []).map(rt => ({
+    // Only use remote Firebase data as the authoritative source of truth.
+    // listenToSchoolTeachers automatically filters out permanently and temporarily deleted teachers.
+    return (remoteTeachers || [])
+      .filter(rt => rt && rt.schoolCode && rt.schoolCode.trim().toUpperCase() === activeSchoolCode.trim().toUpperCase())
+      .map(rt => ({
         ...rt,
         id: rt.uid || rt.id,
         uid: rt.uid || rt.id,
@@ -349,50 +351,45 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
         subject: rt.subject || rt.primarySubject || rt.designation || 'General',
         status: (rt.status as 'active' | 'inactive' | 'suspended') || 'active'
       }));
-    }
+  }, [activeSchoolCode, remoteTeachers]);
 
-    const local = StorageService.getTeachersBySchoolCode(activeSchoolCode) || [];
-    return local
-      .filter(t => t && !StorageService.isTeacherDeleted(t.id, t.email || t.gmail))
-      .map(t => ({
-        ...t,
-        id: t.uid || t.id,
-        uid: t.uid || t.id,
-        email: t.email || t.gmail || '',
-        gmail: t.gmail || t.email || '',
-        password: '',
-        subject: t.subject || t.primarySubject || t.designation || 'General',
-        status: (t.status as 'active' | 'inactive' | 'suspended') || 'active'
-      }));
-  }, [activeSchoolCode, hasLoadedRemoteTeachers, remoteTeachers]);
-
-  // Load all classes in school (merged local and Firestore)
-  // Strictly filter to only classrooms created by teachers in this school
+  // Load all classes in school
+  // Strictly filter to only classrooms actually created by real teachers in this school
   const classesList = useMemo(() => {
-    const local = StorageService.getClassesList();
     const map = new Map<string, ClassItem>();
-    (Array.isArray(local) ? local : []).forEach(c => {
-      if (c && c.id) map.set(c.id, c);
-    });
+
+    // Use only remote Firebase data to ensure single source of truth across admins
     (Array.isArray(remoteClasses) ? remoteClasses : []).forEach(rc => {
-      if (rc && rc.id) {
-        map.set(rc.id, { ...(map.get(rc.id) || {}), ...rc });
+      if (rc && rc.id && rc.schoolCode && rc.schoolCode.trim().toUpperCase() === activeSchoolCode.trim().toUpperCase()) {
+        map.set(rc.id, rc);
       }
     });
+
     const all = Array.from(map.values());
     const safeTeachers = Array.isArray(teachers) ? teachers.filter(Boolean) : [];
-
+    
+    // Only count classrooms that actually belong to valid teachers in this school
     return all.filter(c => {
       if (!c) return false;
-      if (c.isTeacherCreated) return true;
-      if (c.createdByTeacherId && safeTeachers.some(t => t && t.id === c.createdByTeacherId)) return true;
-      if (c.createdByTeacherEmail && safeTeachers.some(t => t && t.email && t.email.toLowerCase() === c.createdByTeacherEmail?.toLowerCase())) return true;
-      if (c.teacherId && safeTeachers.some(t => t && t.id === c.teacherId)) return true;
-      if (c.className && safeTeachers.some(t => t && t.assignedClass && (t.assignedClass || '').trim().toLowerCase() === (c.className || '').trim().toLowerCase())) return true;
-      if (c.teacherName && safeTeachers.some(t => t && t.name && (t.name || '').trim().toLowerCase() === (c.teacherName || '').trim().toLowerCase())) return true;
-      return false;
+      
+      // The classroom must belong to this school
+      if (!c.schoolCode || c.schoolCode.trim().toUpperCase() !== activeSchoolCode.trim().toUpperCase()) return false;
+      
+      // Must be a real created class, not a generic standard/template
+      if (!c.isTeacherCreated && !c.createdByTeacherId) return false;
+      
+      // Verify ownership via teacher ID or email against valid teachers list
+      const teacherMatch = safeTeachers.some(t => {
+        if (!t) return false;
+        if (c.createdByTeacherId && (c.createdByTeacherId === t.id || c.createdByTeacherId === t.uid)) return true;
+        if (c.teacherId && (c.teacherId === t.id || c.teacherId === t.uid)) return true;
+        if (c.createdByTeacherEmail && t.email && c.createdByTeacherEmail.trim().toLowerCase() === t.email.trim().toLowerCase()) return true;
+        return false;
+      });
+      
+      return teacherMatch;
     });
-  }, [mutationCount, remoteClasses, teachers]);
+  }, [remoteClasses, teachers, activeSchoolCode]);
 
   // Helper to get only classrooms created by a specific teacher
   const getTeacherCreatedClasses = useCallback((teacherId?: string, teacherEmail?: string, teacherName?: string): ClassItem[] => {
@@ -1377,7 +1374,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
               <div className="p-4 rounded-2xl bg-[#0F1115]/90 border border-[#2D3139] space-y-1">
                 <div className="flex items-center justify-between text-slate-400 text-xs font-bold">
-                  <span>Classes & Divisions</span>
+                  <span>Total Classes</span>
                   <Layers className="w-4 h-4 text-purple-400" />
                 </div>
                 <div className="flex items-baseline gap-2">
