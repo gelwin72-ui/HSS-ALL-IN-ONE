@@ -25,7 +25,6 @@ import {
   AlertCircle,
   Hash,
   KeyRound,
-  RefreshCw,
   Bell,
   Eye,
   X,
@@ -83,7 +82,8 @@ import { CloudSync } from '../utils/cloudSync';
 import {
   generateSchoolAdminAuditPDF,
   generateSchoolAdminStudentsPDF,
-  generateSchoolAdminTeachersPDF
+  generateSchoolAdminTeachersPDF,
+  shareOrDownloadPDF
 } from '../utils/pdfGenerator';
 
 interface SchoolAdminDashboardScreenProps {

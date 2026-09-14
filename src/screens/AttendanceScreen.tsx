@@ -19,7 +19,8 @@ import {
   Clock,
   ArrowRight,
   Check,
-  X
+  X,
+  RefreshCw
 } from 'lucide-react';
 import { SchoolProfile, ClassInfo, TeacherInfo, Student, AttendanceRecord } from '../types';
 import { generateAbsentReportPDF, generateMonthlyAttendancePDF, generateAttendanceHistoryPDF } from '../utils/pdfGenerator';

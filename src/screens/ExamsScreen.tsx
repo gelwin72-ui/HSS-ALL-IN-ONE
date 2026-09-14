@@ -17,7 +17,8 @@ import {
   Info,
   Check,
   X,
-  RotateCcw
+  RotateCcw,
+  RefreshCw
 } from 'lucide-react';
 import { SchoolProfile, ClassInfo, TeacherInfo, Student, Exam, Subject, ExamType, ExamMarksRecord, StudentExamMark } from '../types';
 import { computeExamRankings, getGradeColor } from '../utils/calculations';
