@@ -22,6 +22,7 @@ export default defineConfig(() => {
           navigateFallbackAllowlist: [/^(?!\/__).*/],
         },
         manifest: {
+          id: basePath,
           name: 'HSS ALL IN ONE',
           short_name: 'HSS ALL IN ONE',
           description: 'The Complete Smart Assistant for Higher Secondary School Teachers',
@@ -31,22 +32,58 @@ export default defineConfig(() => {
           scope: basePath,
           start_url: basePath,
           orientation: 'portrait-primary',
+          categories: ['education', 'productivity', 'utilities'],
           icons: [
             {
-              src: 'icon-192.png',
-              sizes: '192x192',
+              src: 'favicon-16x16.png',
+              sizes: '16x16',
               type: 'image/png'
             },
             {
-              src: 'icon-512.png',
-              sizes: '512x512',
+              src: 'favicon-32x32.png',
+              sizes: '32x32',
               type: 'image/png'
+            },
+            {
+              src: 'apple-touch-icon.png',
+              sizes: '180x180',
+              type: 'image/png'
+            },
+            {
+              src: 'pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any'
+            },
+            {
+              src: 'icon-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any'
+            },
+            {
+              src: 'pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any'
             },
             {
               src: 'icon-512.png',
               sizes: '512x512',
               type: 'image/png',
-              purpose: 'any maskable'
+              purpose: 'any'
+            },
+            {
+              src: 'pwa-maskable-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable'
+            },
+            {
+              src: 'icon-maskable-512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable'
             }
           ]
         }
