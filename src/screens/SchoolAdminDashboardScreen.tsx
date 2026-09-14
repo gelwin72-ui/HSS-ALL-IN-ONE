@@ -250,6 +250,19 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   const [activityTypeFilter, setActivityTypeFilter] = useState<string>('ALL');
   const [activitySearchQuery, setActivitySearchQuery] = useState('');
 
+  // Live Teacher Action / Class Modification Notification for School Admin
+  const [liveNotification, setLiveNotification] = useState<{
+    id: string;
+    title: string;
+    message: string;
+    timestamp: string;
+  } | null>(null);
+
+  const isInitialClassesLoadRef = useRef(true);
+  const isInitialActivitiesLoadRef = useRef(true);
+  const latestActivityIdRef = useRef<string | null>(null);
+  const prevClassesSummaryRef = useRef<string>('');
+
   // Register storage mutation listener so state re-renders immediately on any storage change
   React.useEffect(() => {
     const unsub = registerStorageMutationListener(() => {
@@ -271,14 +284,41 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       setHasLoadedRemoteTeachers(true);
     });
 
-    // 2. Subscribe to real-time classes
+    // 2. Subscribe to real-time classes (All-time active classroom sync)
     const unsubClasses = CloudSync.listenToSchoolClasses(activeSchoolCode, (classList) => {
       setRemoteClasses(classList);
+      const summary = classList.map(c => `${c.id}:${c.className}:${c.classStrength}`).join('|');
+      if (!isInitialClassesLoadRef.current && prevClassesSummaryRef.current && prevClassesSummaryRef.current !== summary) {
+        showToast(`⚡ Real-Time Update: Classroom records synchronized (${classList.length} active classes)`);
+      }
+      prevClassesSummaryRef.current = summary;
+      isInitialClassesLoadRef.current = false;
     });
 
-    // 3. Subscribe to real-time teacher activities
+    // 3. Subscribe to real-time teacher activities (Instant Notification for Admin)
     const unsubActivities = CloudSync.listenToSchoolActivities(activeSchoolCode, (activities) => {
       setRealtimeActivities(activities);
+      if (!isInitialActivitiesLoadRef.current && activities.length > 0) {
+        const newest = activities[0];
+        if (newest && newest.id !== latestActivityIdRef.current) {
+          latestActivityIdRef.current = newest.id;
+          const timeStr = new Date(newest.timestamp || Date.now()).toLocaleTimeString('en-IN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+          setLiveNotification({
+            id: newest.id,
+            title: `Teacher Action: ${newest.teacherName || 'Faculty'}`,
+            message: newest.description || `Changes recorded in ${newest.assignedClass || 'Classroom'}`,
+            timestamp: timeStr
+          });
+          showToast(`🔔 ${newest.teacherName || 'Teacher'}: ${newest.description}`);
+        }
+      } else if (activities.length > 0) {
+        latestActivityIdRef.current = activities[0]?.id || null;
+      }
+      isInitialActivitiesLoadRef.current = false;
     });
 
     // 4. Subscribe to real-time principal broadcasts
@@ -358,45 +398,125 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       }));
   }, [activeSchoolCode, remoteTeachers]);
 
-  // Load all classes in school
-  // Strictly filter to only classrooms actually created by real teachers in this school
+  // Load all classes in school - strictly calculates classes created by the teacher(s) for entering the app + any created after entering
   const classesList = useMemo(() => {
-    const map = new Map<string, ClassItem>();
+    const rawMap = new Map<string, ClassItem>();
 
-    // Use only remote Firebase data to ensure single source of truth across admins
-    (Array.isArray(remoteClasses) ? remoteClasses : []).forEach(rc => {
-      if (rc && rc.id && rc.schoolCode && rc.schoolCode.trim().toUpperCase() === activeSchoolCode.trim().toUpperCase()) {
-        map.set(rc.id, rc);
+    // 1. Collect all candidate classes for this school
+    const localClasses = StorageService.getClassesList() || [];
+    localClasses.forEach(lc => {
+      if (lc && lc.id) {
+        const sc = (lc.schoolCode || '').trim().toUpperCase();
+        if (!sc || sc === activeSchoolCode.trim().toUpperCase()) {
+          rawMap.set(lc.id, {
+            ...lc,
+            schoolCode: activeSchoolCode,
+            status: 'active' as const
+          });
+        }
       }
     });
 
-    const all = Array.from(map.values());
-    const safeTeachers = Array.isArray(teachers) ? teachers.filter(Boolean) : [];
-    
-    // Only count classrooms that actually belong to valid teachers in this school
-    return all.filter(c => {
-      if (!c) return false;
-      
-      // The classroom must belong to this school
-      if (!c.schoolCode || c.schoolCode.trim().toUpperCase() !== activeSchoolCode.trim().toUpperCase()) return false;
-      
-      // Must be a real created class, not a generic standard/template
-      if (!c.isTeacherCreated && !c.createdByTeacherId) return false;
-      
-      // Verify ownership via teacher ID or email against valid teachers list
-      const teacherMatch = safeTeachers.some(t => {
-        if (!t) return false;
-        if (c.createdByTeacherId && (c.createdByTeacherId === t.id || c.createdByTeacherId === t.uid)) return true;
-        if (c.teacherId && (c.teacherId === t.id || c.teacherId === t.uid)) return true;
-        if (c.createdByTeacherEmail && t.email && c.createdByTeacherEmail.trim().toLowerCase() === t.email.trim().toLowerCase()) return true;
+    // 2. Overlay remote Firebase classes (authoritative cloud multi-device sync)
+    (Array.isArray(remoteClasses) ? remoteClasses : []).forEach(rc => {
+      if (rc && rc.id) {
+        const sc = (rc.schoolCode || '').trim().toUpperCase();
+        if (!sc || sc === activeSchoolCode.trim().toUpperCase()) {
+          rawMap.set(rc.id, {
+            ...rc,
+            schoolCode: activeSchoolCode,
+            status: 'active' as const
+          });
+        }
+      }
+    });
+
+    const candidates = Array.from(rawMap.values());
+    const validTeachers = Array.isArray(teachers) ? teachers.filter(Boolean) : [];
+
+    // If there are no registered teachers yet, show school candidates
+    if (validTeachers.length === 0) {
+      return candidates.map(c => ({ ...c, status: 'active' as const }));
+    }
+
+    // If total teacher count is 1:
+    // Only classes created by this single teacher (the class created for entering the app + any other classes created after entering)
+    // should be seen as the total classes.
+    if (validTeachers.length === 1) {
+      const singleTeacher = validTeachers[0];
+      const singleTeacherId = singleTeacher.id || singleTeacher.uid || '';
+      const singleTeacherEmail = (singleTeacher.email || singleTeacher.gmail || '').trim().toLowerCase();
+      const singleTeacherName = (singleTeacher.name || '').trim().toLowerCase();
+      const assignedClassName = (singleTeacher.assignedClass || '').trim().toLowerCase();
+
+      // Find all matching classes for this single teacher
+      const matched = candidates.filter(c => {
+        if (!c) return false;
+        // Check teacher ID match
+        if (singleTeacherId && (c.createdByTeacherId === singleTeacherId || c.teacherId === singleTeacherId || c.teacherUid === singleTeacherId)) return true;
+        // Check teacher email match
+        if (singleTeacherEmail && c.createdByTeacherEmail && c.createdByTeacherEmail.trim().toLowerCase() === singleTeacherEmail) return true;
+        // Check teacher name match
+        if (singleTeacherName && c.teacherName && c.teacherName.trim().toLowerCase() === singleTeacherName) return true;
+        // Check initial entry assigned class name match
+        if (assignedClassName && c.className && c.className.trim().toLowerCase() === assignedClassName) return true;
+        // If class belongs to school and was teacher created
+        if (c.schoolCode && c.schoolCode.trim().toUpperCase() === activeSchoolCode.trim().toUpperCase() && c.isTeacherCreated) return true;
         return false;
       });
-      
-      return teacherMatch;
-    });
-  }, [remoteClasses, teachers, activeSchoolCode]);
 
-  // Helper to get only classrooms created by a specific teacher
+      // If the teacher has an assigned initial entry class that wasn't found in candidate records, ensure it is synthesized
+      if (matched.length === 0 && (singleTeacher.assignedClass || singleTeacher.standard)) {
+        const entryClassName = singleTeacher.assignedClass || `${singleTeacher.standard || 'Class 12'} ${singleTeacher.stream || 'Science'} ${singleTeacher.section || 'A'}`;
+        const syntheticClass: ClassItem = {
+          id: `entry-cls-${singleTeacherId || 'primary'}`,
+          className: entryClassName,
+          standard: singleTeacher.standard || 'Class 12 (Plus Two)',
+          stream: singleTeacher.stream || 'Science',
+          section: singleTeacher.section || 'A',
+          academicYear: singleTeacher.academicYear || '2026-2027',
+          classStrength: singleTeacher.studentCount || 0,
+          teacherId: singleTeacherId,
+          teacherUid: singleTeacherId,
+          teacherName: singleTeacher.name,
+          schoolCode: activeSchoolCode,
+          isTeacherCreated: true,
+          createdByTeacherId: singleTeacherId,
+          createdByTeacherEmail: singleTeacher.email || singleTeacher.gmail,
+          createdAt: singleTeacher.createdAt || new Date().toISOString(),
+          status: 'active' as const
+        };
+        return [syntheticClass];
+      }
+
+      return matched.map(c => ({ ...c, status: 'active' as const }));
+    }
+
+    // If multiple teachers (validTeachers.length > 1):
+    // Include all classes created by any of the valid teachers in this school
+    const teacherMatchedClasses = candidates.filter(c => {
+      if (!c) return false;
+      return validTeachers.some(t => {
+        const tId = t.id || t.uid || '';
+        const tEmail = (t.email || t.gmail || '').trim().toLowerCase();
+        const tName = (t.name || '').trim().toLowerCase();
+        const tAssigned = (t.assignedClass || '').trim().toLowerCase();
+
+        if (tId && (c.createdByTeacherId === tId || c.teacherId === tId || c.teacherUid === tId)) return true;
+        if (tEmail && c.createdByTeacherEmail && c.createdByTeacherEmail.trim().toLowerCase() === tEmail) return true;
+        if (tName && c.teacherName && c.teacherName.trim().toLowerCase() === tName) return true;
+        if (tAssigned && c.className && c.className.trim().toLowerCase() === tAssigned) return true;
+        if (c.schoolCode && c.schoolCode.trim().toUpperCase() === activeSchoolCode.trim().toUpperCase() && c.isTeacherCreated) return true;
+        return false;
+      });
+    });
+
+    return teacherMatchedClasses.length > 0
+      ? teacherMatchedClasses.map(c => ({ ...c, status: 'active' as const }))
+      : candidates.map(c => ({ ...c, status: 'active' as const }));
+  }, [remoteClasses, teachers, activeSchoolCode, mutationCount]);
+
+  // Helper to get only classrooms created by a specific teacher (entry class + any created after entering)
   const getTeacherCreatedClasses = useCallback((teacherId?: string, teacherEmail?: string, teacherName?: string): ClassItem[] => {
     if (!teacherId && !teacherEmail && !teacherName) return [];
     const safeClasses = Array.isArray(classesList) ? classesList : [];
@@ -406,19 +526,27 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
       (teacherEmail && (
         (t.email && t.email.toLowerCase() === teacherEmail.toLowerCase()) ||
         (t.gmail && t.gmail.toLowerCase() === teacherEmail.toLowerCase())
-      ))
+      )) ||
+      (teacherName && t.name && t.name.toLowerCase() === teacherName.toLowerCase())
     ));
 
     const targetId = teacherId || tObj?.id || tObj?.uid;
     const targetEmail = (teacherEmail || tObj?.email || tObj?.gmail || '').toLowerCase().trim();
+    const targetName = (teacherName || tObj?.name || '').toLowerCase().trim();
+    const targetAssigned = (tObj?.assignedClass || '').toLowerCase().trim();
 
-    return safeClasses.filter(c => {
+    const matched = safeClasses.filter(c => {
       if (!c) return false;
-      if (targetId && (c.createdByTeacherId === targetId || c.teacherId === targetId)) return true;
+      if (targetId && (c.createdByTeacherId === targetId || c.teacherId === targetId || c.teacherUid === targetId)) return true;
       if (targetEmail && c.createdByTeacherEmail && c.createdByTeacherEmail.toLowerCase() === targetEmail) return true;
+      if (targetName && c.teacherName && c.teacherName.toLowerCase() === targetName) return true;
+      if (targetAssigned && c.className && c.className.toLowerCase() === targetAssigned) return true;
+      if (tObj && (teachers.length === 1) && (c.schoolCode || '').toUpperCase() === activeSchoolCode.toUpperCase()) return true;
       return false;
     });
-  }, [classesList, teachers]);
+
+    return matched;
+  }, [classesList, teachers, activeSchoolCode]);
 
   // Classrooms created by currently selected teacher in Teacher-Wise mode
   const activeTeacherCreatedClasses = useMemo(() => {
@@ -674,32 +802,52 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
   const selectedTeacherDossierData = useMemo(() => {
     if (!selectedTeacherForDossier) return null;
 
-    // Find class assigned to this teacher
-    const safeClasses = Array.isArray(classesList) ? classesList : [];
-    const teacherClass = safeClasses.find(c => c && c.className === selectedTeacherForDossier.assignedClass) || safeClasses[0];
-    const classId = teacherClass ? teacherClass.id : 'cls-12-sci-a';
+    const teacherClasses = getTeacherCreatedClasses(
+      selectedTeacherForDossier.id,
+      selectedTeacherForDossier.email || selectedTeacherForDossier.gmail,
+      selectedTeacherForDossier.name
+    );
+    const primaryClass = teacherClasses[0] || classesList[0];
 
-    const students = StorageService.getStudents(classId) || [];
-    const attendance = StorageService.getAttendance(classId) || [];
-    const exams = StorageService.getExams(classId) || [];
-    const marksMap = StorageService.getExamMarksMap(classId) || {};
+    // Aggregate students, attendance, exams across all classrooms created by this teacher
+    let allStudents: Student[] = [];
+    let totalAttendanceDays = 0;
+    let totalExams = 0;
+    let marksEnteredCount = 0;
+    const marksMap: Record<string, any> = {};
 
-    // Calculate completion stats
-    const totalAttendanceDays = Array.isArray(attendance) ? attendance.length : 0;
-    const totalExams = Array.isArray(exams) ? exams.length : 0;
-    const marksEnteredCount = Object.keys(marksMap || {}).length;
+    teacherClasses.forEach(cls => {
+      const clsStudents = StorageService.getStudents(cls.id) || [];
+      allStudents = [...allStudents, ...clsStudents];
+      const clsAttendance = StorageService.getAttendance(cls.id) || [];
+      totalAttendanceDays += clsAttendance.length;
+      const clsExams = StorageService.getExams(cls.id) || [];
+      totalExams += clsExams.length;
+      const clsMarks = StorageService.getExamMarksMap(cls.id) || {};
+      Object.assign(marksMap, clsMarks);
+      marksEnteredCount += Object.keys(clsMarks).length;
+    });
+
+    if (teacherClasses.length === 0 && primaryClass) {
+      allStudents = StorageService.getStudents(primaryClass.id) || [];
+      const att = StorageService.getAttendance(primaryClass.id) || [];
+      totalAttendanceDays = att.length;
+      const ex = StorageService.getExams(primaryClass.id) || [];
+      totalExams = ex.length;
+    }
 
     return {
-      teacherClass,
-      students,
-      attendance,
-      exams,
+      teacherClasses,
+      primaryClass,
+      students: allStudents,
+      attendance: [],
+      exams: [],
       marksMap,
       totalAttendanceDays,
       totalExams,
       marksEnteredCount
     };
-  }, [selectedTeacherForDossier, classesList, mutationCount]);
+  }, [selectedTeacherForDossier, getTeacherCreatedClasses, classesList, mutationCount]);
 
   // Handlers
   const handleSaveSchoolSettings = async (e: React.FormEvent) => {
@@ -1376,6 +1524,42 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
 
       {/* Main Admin Content Container */}
       <main className="max-w-7xl mx-auto w-full px-4 sm:px-8 py-6 space-y-6 flex-1">
+        {/* Live Real-time Teacher Activity Notification Banner */}
+        {liveNotification && (
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/20 via-purple-600/20 to-emerald-600/20 border border-amber-500/40 text-white shadow-2xl flex items-center justify-between gap-4 animate-fade-in">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-500/30 text-amber-300 shrink-0 animate-pulse">
+                <Bell className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-amber-400 uppercase tracking-wider">
+                    {liveNotification.title}
+                  </span>
+                  <span className="text-[10px] text-slate-300 font-mono bg-black/40 px-2 py-0.5 rounded-full">
+                    {liveNotification.timestamp}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-bold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    LIVE
+                  </span>
+                </div>
+                <p className="text-sm font-semibold text-slate-100">
+                  {liveNotification.message}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLiveNotification(null)}
+              className="p-1.5 rounded-lg bg-black/40 hover:bg-black/60 text-slate-400 hover:text-white transition cursor-pointer shrink-0"
+              title="Dismiss notification"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* Administrator Welcome Hero Banner with Institutional Statistics */}
         <div className="rounded-3xl bg-gradient-to-r from-[#1A1C23] via-[#222530] to-[#1A1C23] border border-[#2D3139] p-5 sm:p-7 shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -1439,12 +1623,13 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                 </div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-2xl sm:text-3xl font-black text-white">{classesList.length}</span>
-                  <span className="text-[10px] text-purple-300 font-semibold">
-                    {classesList.length > 0 ? `${classesList.length} Active` : '0 Active'}
+                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-semibold font-mono">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    {classesList.length > 0 ? `${classesList.length} All-Time Active` : '0 Active'}
                   </span>
                 </div>
                 <span className="text-[11px] text-slate-400 block">
-                  {classesList.length > 0 ? 'Recorded divisions' : 'No classes registered'}
+                  {classesList.length > 0 ? 'All divisions active & synchronized' : 'No classes registered'}
                 </span>
               </div>
 
@@ -2369,11 +2554,12 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
             {/* Teacher Cards Grid for Work Dossier inspection */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filteredTeachers.map((teacher, idx) => {
-                const assignedCls = teacher.assignedClass || 'Not Assigned';
+                const teacherClasses = getTeacherCreatedClasses(teacher.id, teacher.email || teacher.gmail, teacher.name);
+                const assignedCls = teacher.assignedClass || (teacherClasses[0]?.className) || 'Not Assigned';
                 const dobDisplay = teacher.dob
                   ? new Date(teacher.dob).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
                   : 'Not Specified';
-                const matchingCls = classesList.find(c => c.className === teacher.assignedClass || c.id === teacher.assignedClass);
+                const totalStudentsManaged = teacherClasses.reduce((sum, c) => sum + (c.classStrength || 0), 0);
 
                 return (
                   <div
@@ -2406,9 +2592,15 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                             </span>
                           </div>
                           <p className="text-xs text-amber-400 font-semibold">{teacher.designation || 'Class Teacher'}</p>
-                          <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
-                            <School className="w-3 h-3 text-slate-500" />
-                            {assignedCls}
+                          <span className="text-[11px] text-slate-300 flex items-center gap-1 mt-0.5">
+                            <School className="w-3 h-3 text-purple-400" />
+                            {teacherClasses.length > 0 ? (
+                              <span>
+                                <strong>{teacherClasses.length} {teacherClasses.length === 1 ? 'Class' : 'Classes'}:</strong> {teacherClasses.map(c => c.className).join(', ')}
+                              </span>
+                            ) : (
+                              <span>{assignedCls}</span>
+                            )}
                           </span>
                         </div>
                       </div>
@@ -2482,7 +2674,7 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                         <CheckCircle2 className="w-3.5 h-3.5" /> Attendance Register: Up to date
                       </span>
                       <span className="text-[11px] font-mono text-slate-400">
-                        Class Strength: <strong>{matchingCls ? `${matchingCls.classStrength || 0} Students` : 'Not Assigned'}</strong>
+                        Class Strength: <strong>{totalStudentsManaged > 0 ? `${totalStudentsManaged} Students` : (teacherClasses[0]?.classStrength ? `${teacherClasses[0].classStrength} Students` : 'Not Assigned')}</strong>
                       </span>
                     </div>
                   </div>
@@ -4462,9 +4654,9 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
             {/* Teacher Info Grid (No Email or Password) */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] text-xs">
               <div>
-                <span className="text-[10px] text-slate-500 uppercase font-bold block">Assigned Classroom</span>
-                <span className="font-semibold text-white truncate block">
-                  {selectedTeacherForDossier.assignedClass || 'Class 12 Bio-Science A'}
+                <span className="text-[10px] text-slate-500 uppercase font-bold block">Classrooms Created ({selectedTeacherDossierData.teacherClasses?.length || 1})</span>
+                <span className="font-semibold text-white truncate block" title={selectedTeacherDossierData.teacherClasses?.map(c => c.className).join(', ') || selectedTeacherForDossier.assignedClass}>
+                  {selectedTeacherDossierData.teacherClasses?.map(c => c.className).join(', ') || selectedTeacherForDossier.assignedClass || 'Class 12 Bio-Science A'}
                 </span>
               </div>
               <div>
@@ -4519,8 +4711,8 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
                   <Users className="w-4 h-4 text-purple-400" />
                   Classroom Student Roster ({selectedTeacherDossierData.students.length})
                 </h4>
-                <span className="text-[11px] text-slate-400 font-mono">
-                  {selectedTeacherForDossier.assignedClass || 'Class 12 Science A'}
+                <span className="text-[11px] text-purple-300 font-mono">
+                  {selectedTeacherDossierData.teacherClasses?.map(c => c.className).join(' • ') || selectedTeacherForDossier.assignedClass || 'Class 12 Science A'}
                 </span>
               </div>
 

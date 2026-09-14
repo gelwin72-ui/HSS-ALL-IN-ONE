@@ -121,6 +121,7 @@ export interface ClassItem {
   isTeacherCreated?: boolean;
   createdByTeacherId?: string;
   createdByTeacherEmail?: string;
+  status?: 'active' | 'inactive' | 'suspended';
 }
 
 export interface TeacherInfo {

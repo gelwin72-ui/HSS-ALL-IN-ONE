@@ -295,6 +295,40 @@ export function App() {
     setClassInfo(newClass);
     setTeacher(newTeacher);
     setClassesList(StorageService.getClassesList());
+
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || newSchool.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+    const classes = StorageService.getClassesList();
+    const existingCls = classes.find(c => c.id === activeClassId);
+    const updatedClassItem: ClassItem = {
+      id: activeClassId,
+      className: newClass.className,
+      standard: newClass.standard,
+      stream: newClass.stream,
+      section: newClass.section,
+      academicYear: newClass.academicYear,
+      classStrength: existingCls?.classStrength || students.length || newClass.classStrength || 0,
+      teacherId: currentTeacher?.id || existingCls?.teacherId || '',
+      teacherUid: currentTeacher?.id || existingCls?.teacherUid || '',
+      teacherName: currentTeacher?.name || newTeacher.teacherName || '',
+      schoolCode: schoolCode,
+      isTeacherCreated: true,
+      createdByTeacherId: currentTeacher?.id || existingCls?.createdByTeacherId || '',
+      createdByTeacherEmail: currentTeacher?.email || currentTeacher?.gmail || existingCls?.createdByTeacherEmail || '',
+      createdAt: existingCls?.createdAt || new Date().toISOString()
+    };
+
+    CloudSync.saveClassToSchool(schoolCode, updatedClassItem, students).catch(() => {});
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || newTeacher.teacherName || 'Teacher',
+      subject: currentTeacher?.subject || newTeacher.designation,
+      assignedClass: newClass.className,
+      activityType: 'profile_updated',
+      description: `Updated Class "${newClass.className}" details (${newClass.standard} ${newClass.stream} ${newClass.section}).`
+    }).catch(() => {});
+
     showToast('School & Class Profile updated successfully!', 'success');
   };
 
@@ -308,6 +342,29 @@ export function App() {
     StorageService.saveStudents(updated, activeClassId);
     setStudents(updated);
     setClassesList(StorageService.getClassesList());
+
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+    const classes = StorageService.getClassesList();
+    const existingCls = classes.find(c => c.id === activeClassId);
+    if (existingCls) {
+      const updatedCls: ClassItem = {
+        ...existingCls,
+        classStrength: updated.length,
+        schoolCode
+      };
+      CloudSync.saveClassToSchool(schoolCode, updatedCls, updated).catch(() => {});
+    }
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || 'Teacher',
+      subject: currentTeacher?.subject,
+      assignedClass: existingCls?.className || classInfo.className,
+      activityType: 'student_added',
+      description: `Enrolled student "${newStudent.name}" (Roll #${newStudent.rollNo}) in class.`
+    }).catch(() => {});
+
     showToast(`Student "${newStudent.name}" enrolled!`, 'success');
     return true;
   };
@@ -322,6 +379,29 @@ export function App() {
     const updated = students.map(s => (s.id === updatedStudent.id ? updatedStudent : s));
     StorageService.saveStudents(updated, activeClassId);
     setStudents(updated);
+
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+    const classes = StorageService.getClassesList();
+    const existingCls = classes.find(c => c.id === activeClassId);
+    if (existingCls) {
+      const updatedCls: ClassItem = {
+        ...existingCls,
+        classStrength: updated.length,
+        schoolCode
+      };
+      CloudSync.saveClassToSchool(schoolCode, updatedCls, updated).catch(() => {});
+    }
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || 'Teacher',
+      subject: currentTeacher?.subject,
+      assignedClass: existingCls?.className || classInfo.className,
+      activityType: 'profile_updated',
+      description: `Updated details for student "${updatedStudent.name}" (Roll #${updatedStudent.rollNo}).`
+    }).catch(() => {});
+
     showToast(`Student "${updatedStudent.name}" updated!`, 'success');
     return true;
   };
@@ -332,6 +412,29 @@ export function App() {
     StorageService.saveStudents(updated, activeClassId);
     setStudents(updated);
     setClassesList(StorageService.getClassesList());
+
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+    const classes = StorageService.getClassesList();
+    const existingCls = classes.find(c => c.id === activeClassId);
+    if (existingCls) {
+      const updatedCls: ClassItem = {
+        ...existingCls,
+        classStrength: updated.length,
+        schoolCode
+      };
+      CloudSync.saveClassToSchool(schoolCode, updatedCls, updated).catch(() => {});
+    }
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || 'Teacher',
+      subject: currentTeacher?.subject,
+      assignedClass: existingCls?.className || classInfo.className,
+      activityType: 'profile_updated',
+      description: `Removed student record "${target?.name || ''}".`
+    }).catch(() => {});
+
     showToast(`Removed student ${target?.name || ''}`, 'info');
   };
 
@@ -340,6 +443,29 @@ export function App() {
     StorageService.saveStudents(updated, activeClassId);
     setStudents(updated);
     setClassesList(StorageService.getClassesList());
+
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+    const classes = StorageService.getClassesList();
+    const existingCls = classes.find(c => c.id === activeClassId);
+    if (existingCls) {
+      const updatedCls: ClassItem = {
+        ...existingCls,
+        classStrength: updated.length,
+        schoolCode
+      };
+      CloudSync.saveClassToSchool(schoolCode, updatedCls, updated).catch(() => {});
+    }
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || 'Teacher',
+      subject: currentTeacher?.subject,
+      assignedClass: existingCls?.className || classInfo.className,
+      activityType: 'profile_updated',
+      description: `Deleted ${ids.length} student records from class.`
+    }).catch(() => {});
+
     showToast(`Deleted ${ids.length} students.`, 'info');
   };
 
@@ -357,6 +483,29 @@ export function App() {
     StorageService.saveStudents(finalStudents, activeClassId);
     setStudents(finalStudents);
     setClassesList(StorageService.getClassesList());
+
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+    const classes = StorageService.getClassesList();
+    const existingCls = classes.find(c => c.id === activeClassId);
+    if (existingCls) {
+      const updatedCls: ClassItem = {
+        ...existingCls,
+        classStrength: finalStudents.length,
+        schoolCode
+      };
+      CloudSync.saveClassToSchool(schoolCode, updatedCls, finalStudents).catch(() => {});
+    }
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || 'Teacher',
+      subject: currentTeacher?.subject,
+      assignedClass: existingCls?.className || classInfo.className,
+      activityType: 'student_added',
+      description: `Imported ${fullList.length} students into class roster.`
+    }).catch(() => {});
+
     showToast(`Successfully imported ${fullList.length} students!`, 'success');
   };
 
@@ -366,11 +515,12 @@ export function App() {
     newStudents: Student[],
     isAdditionalClass: boolean = true
   ) => {
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+
     if (isAdditionalClass) {
       const newClassId = `cls-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
-      const session = StorageService.getAuthSession();
-      const currentTeacher = session.currentTeacher;
-      const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
 
       const classItem: ClassItem = {
         id: newClassId,
@@ -381,6 +531,7 @@ export function App() {
         academicYear: newClassInfo.academicYear,
         classStrength: newStudents.length,
         teacherId: currentTeacher?.id || '',
+        teacherUid: currentTeacher?.id || '',
         teacherName: currentTeacher?.name || '',
         schoolCode: schoolCode,
         isTeacherCreated: true,
@@ -391,11 +542,50 @@ export function App() {
 
       StorageService.addNewClass(classItem, newStudents);
       CloudSync.saveClassToSchool(schoolCode, classItem, newStudents).catch(() => {});
+      CloudSync.recordTeacherActivity(schoolCode, {
+        teacherId: currentTeacher?.id || 'teacher',
+        teacherName: currentTeacher?.name || 'Teacher',
+        subject: currentTeacher?.subject,
+        assignedClass: classItem.className,
+        activityType: 'student_added',
+        description: `Created new Class "${classItem.className}" with ${newStudents.length} students.`
+      }).catch(() => {});
+
       refreshAllState(newClassId);
       showToast(`Created & switched to new class: ${classItem.className} (${newStudents.length} students)!`, 'success');
     } else {
       StorageService.saveClassInfo(newClassInfo, activeClassId);
       StorageService.saveStudents(newStudents, activeClassId);
+      const classes = StorageService.getClassesList();
+      const existingCls = classes.find(c => c.id === activeClassId);
+      const updatedClassItem: ClassItem = {
+        id: activeClassId,
+        className: newClassInfo.className,
+        standard: newClassInfo.standard,
+        stream: newClassInfo.stream,
+        section: newClassInfo.section,
+        academicYear: newClassInfo.academicYear,
+        classStrength: newStudents.length,
+        teacherId: currentTeacher?.id || existingCls?.teacherId || '',
+        teacherUid: currentTeacher?.id || existingCls?.teacherUid || '',
+        teacherName: currentTeacher?.name || existingCls?.teacherName || '',
+        schoolCode: schoolCode,
+        isTeacherCreated: true,
+        createdByTeacherId: currentTeacher?.id || existingCls?.createdByTeacherId || '',
+        createdByTeacherEmail: currentTeacher?.email || currentTeacher?.gmail || existingCls?.createdByTeacherEmail || '',
+        createdAt: existingCls?.createdAt || new Date().toISOString()
+      };
+
+      CloudSync.saveClassToSchool(schoolCode, updatedClassItem, newStudents).catch(() => {});
+      CloudSync.recordTeacherActivity(schoolCode, {
+        teacherId: currentTeacher?.id || 'teacher',
+        teacherName: currentTeacher?.name || 'Teacher',
+        subject: currentTeacher?.subject,
+        assignedClass: newClassInfo.className,
+        activityType: 'profile_updated',
+        description: `Updated Class "${newClassInfo.className}" roster and details (${newStudents.length} students).`
+      }).catch(() => {});
+
       refreshAllState(activeClassId);
       showToast(`Class "${newClassInfo.className}" updated!`, 'success');
     }
@@ -412,7 +602,21 @@ export function App() {
     const targetName = targetClass?.className || 'Class';
     const wasActive = StorageService.getActiveClassId() === classId;
 
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+
     StorageService.deleteClass(classId);
+    CloudSync.deleteClassFromSchool(schoolCode, classId).catch(() => {});
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || 'Teacher',
+      subject: currentTeacher?.subject,
+      assignedClass: targetName,
+      activityType: 'profile_updated',
+      description: `Removed Class "${targetName}" from school catalog.`
+    }).catch(() => {});
+
     const updatedList = StorageService.getClassesList();
     const newActive = StorageService.getActiveClassId();
     refreshAllState(newActive);
@@ -423,6 +627,19 @@ export function App() {
   const handleSaveAttendance = (record: AttendanceRecord) => {
     StorageService.saveDailyAttendance(record, activeClassId);
     setAttendance(StorageService.getAttendance(activeClassId));
+
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || 'Teacher',
+      subject: currentTeacher?.subject,
+      assignedClass: classInfo.className,
+      activityType: 'attendance',
+      description: `Marked attendance for ${record.date} (${record.presentStudentIds?.length || 0} Present, ${record.absentStudentIds?.length || 0} Absent).`
+    }).catch(() => {});
+
     showToast(`Attendance for ${record.date} saved!`, 'success');
   };
 
@@ -445,6 +662,20 @@ export function App() {
     }
     StorageService.saveExams(updated, activeClassId);
     setExams(updated);
+
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+    const totalMaxMarks = exam.subjects?.reduce((sum, s) => sum + (s.maxMarks || 0), 0) || 0;
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || 'Teacher',
+      subject: currentTeacher?.subject,
+      assignedClass: classInfo.className,
+      activityType: 'marks_entered',
+      description: `Saved examination schedule/details for "${exam.name}" (Max: ${totalMaxMarks}).`
+    }).catch(() => {});
+
     showToast(`Exam "${exam.name}" saved!`, 'success');
   };
 
@@ -458,6 +689,20 @@ export function App() {
   const handleSaveMarksRecord = (examId: string, marksRecord: ExamMarksRecord) => {
     StorageService.saveExamMarks(examId, marksRecord, activeClassId);
     setExamMarksMap(StorageService.getExamMarksMap(activeClassId));
+
+    const session = StorageService.getAuthSession();
+    const currentTeacher = session.currentTeacher;
+    const schoolCode = currentTeacher?.schoolCode || StorageService.getSchoolProfile().schoolCode || 'SSHSS@111213';
+    const targetExam = exams.find(e => e.id === examId);
+    CloudSync.recordTeacherActivity(schoolCode, {
+      teacherId: currentTeacher?.id || 'teacher',
+      teacherName: currentTeacher?.name || 'Teacher',
+      subject: currentTeacher?.subject,
+      assignedClass: classInfo.className,
+      activityType: 'marks_entered',
+      description: `Entered and computed marks for "${targetExam?.name || 'Exam'}".`
+    }).catch(() => {});
+
     showToast('Exam marks saved and computed successfully!', 'success');
   };
 
