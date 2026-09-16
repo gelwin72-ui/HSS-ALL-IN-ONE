@@ -17,15 +17,44 @@ export default defineConfig(() => {
         injectRegister: 'auto',
         workbox: {
           maximumFileSizeToCacheInBytes: 5000000,
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest,json,xml,txt}'],
           navigateFallback: `${basePath}index.html`,
           navigateFallbackAllowlist: [/^(?!\/__).*/],
+          runtimeCaching: [
+            {
+              urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'google-fonts-cache',
+                expiration: {
+                  maxEntries: 10,
+                  maxAgeSeconds: 60 * 60 * 24 * 365, // 1 year
+                },
+              },
+            },
+            {
+              urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/i,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'static-image-assets',
+                expiration: {
+                  maxEntries: 60,
+                  maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+                },
+              },
+            },
+            {
+              // Dynamic cloud sync, Firebase Auth, Realtime DB, Firestore & OneSignal MUST bypass cache
+              urlPattern: /^https:\/\/(?:.*\.firebaseio\.com|identitytoolkit\.googleapis\.com|firestore\.googleapis\.com|cdn\.onesignal\.com|onesignal\.com)\/.*/i,
+              handler: 'NetworkOnly',
+            },
+          ],
         },
         manifest: {
           id: basePath,
           name: 'HSS ALL IN ONE',
           short_name: 'HSS ALL IN ONE',
-          description: 'The Complete Smart Assistant for Higher Secondary School Teachers',
+          description: 'HSS ALL IN ONE is an educational resource platform for Higher Secondary students, providing study materials, notes, PDFs, question papers and useful academic resources.',
           theme_color: '#0F1115',
           background_color: '#0F1115',
           display: 'standalone',
@@ -42,6 +71,11 @@ export default defineConfig(() => {
             {
               src: 'favicon-32x32.png',
               sizes: '32x32',
+              type: 'image/png'
+            },
+            {
+              src: 'favicon-48x48.png',
+              sizes: '48x48',
               type: 'image/png'
             },
             {
@@ -84,6 +118,36 @@ export default defineConfig(() => {
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable'
+            }
+          ],
+          shortcuts: [
+            {
+              name: 'Daily Attendance',
+              short_name: 'Attendance',
+              description: 'Mark attendance and generate absentee register',
+              url: `${basePath}#attendance`,
+              icons: [{ src: 'pwa-192x192.png', sizes: '192x192' }]
+            },
+            {
+              name: 'Exam Marks & Ranks',
+              short_name: 'Exams',
+              description: 'Enter exam marks and compute ranks',
+              url: `${basePath}#exams`,
+              icons: [{ src: 'pwa-192x192.png', sizes: '192x192' }]
+            },
+            {
+              name: 'Academic PDF Reports',
+              short_name: 'Reports',
+              description: 'Generate and download classroom PDF reports',
+              url: `${basePath}#reports`,
+              icons: [{ src: 'pwa-192x192.png', sizes: '192x192' }]
+            },
+            {
+              name: 'School Admin Portal',
+              short_name: 'School Admin',
+              description: 'Institutional administrator dashboard',
+              url: `${basePath}#school-admin`,
+              icons: [{ src: 'pwa-192x192.png', sizes: '192x192' }]
             }
           ]
         }

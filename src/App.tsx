@@ -23,6 +23,7 @@ import { SearchModal } from './components/SearchModal';
 import { ReminderModal } from './components/ReminderModal';
 import { AddClassModal } from './components/AddClassModal';
 import { NotificationPermissionBanner } from './components/NotificationPermissionBanner';
+import { InstallPromptBanner } from './components/InstallPromptBanner';
 
 import { auth, onAuthStateChanged, signOut } from './utils/firebase';
 import { CloudSync } from './utils/cloudSync';
@@ -786,6 +787,7 @@ export function App() {
           onLoginSuccess={handleTeacherLoginSuccess}
           onAdminLoginSuccess={handleAdminLoginSuccess}
         />
+        <InstallPromptBanner />
         {toast && (
           <Toast
             message={toast.message}
@@ -805,6 +807,7 @@ export function App() {
           admin={currentAdmin}
           onLogout={handleAdminLogout}
         />
+        <InstallPromptBanner />
         {toast && (
           <Toast
             message={toast.message}
@@ -1043,7 +1046,10 @@ export function App() {
       {/* 8. Notification Permission Banner */}
       <NotificationPermissionBanner />
 
-      {/* 9. Toast Message Popups */}
+      {/* 9. In-App PWA Install Prompt Banner */}
+      <InstallPromptBanner />
+
+      {/* 10. Toast Message Popups */}
       {toast && (
         <Toast
           message={toast.message}
