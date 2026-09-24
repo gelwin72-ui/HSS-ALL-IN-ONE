@@ -69,7 +69,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
   const [mode, setMode] = useState<'signup' | 'login' | 'admin' | 'reset'>('signup');
   const [resetRole, setResetRole] = useState<'teacher' | 'admin'>('teacher');
   const [resetEmail, setResetEmail] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -199,6 +200,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
 
       CloudSync.setActiveSyncEmail(cleanEmail);
       CloudSync.startRealtimeSync(user);
+
+      // Record entered Gmail in Realtime Database under 'gmail' (no passwords)
+      CloudSync.recordGmailEntry(cleanEmail, {
+        role: 'teacher',
+        name: activeTeacher.name,
+        schoolCode: activeTeacher.schoolCode,
+        loginMethod: 'google'
+      }).catch(() => {});
 
       // Push latest local state to cloud to keep everything synchronized (non-blocking)
       CloudSync.pushToCloud(user).catch(() => {});
@@ -472,9 +481,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         CloudSync.pushToCloud(auth.currentUser).catch(() => {});
       }
 
-      // Store credentials in 'Gmail and Password' section in RTDB
-      if (cleanEmail && signupPassword) {
-        CloudSync.storeCredentials(cleanEmail, signupPassword, 'teacher').catch(() => {});
+      // Record entered Gmail in Realtime Database under 'gmail' (no passwords)
+      if (cleanEmail) {
+        CloudSync.recordGmailEntry(cleanEmail, {
+          role: 'teacher',
+          name: signupName,
+          schoolCode: cleanSchoolCode,
+          loginMethod: 'email'
+        }).catch(() => {});
       }
 
       // Background cloud sync (non-blocking)
@@ -716,9 +730,21 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         currentAdmin: null
       });
 
-      // Store credentials in 'Gmail and Password' section in RTDB
-      if (cleanQuery.includes('@') && loginPassword) {
-        CloudSync.storeCredentials(cleanQuery, loginPassword, 'teacher').catch(() => {});
+      // Record entered Gmail in Realtime Database under 'gmail' (no passwords)
+      if (cleanQuery.includes('@')) {
+        CloudSync.recordGmailEntry(cleanQuery, {
+          role: 'teacher',
+          name: match.name,
+          schoolCode: match.schoolCode,
+          loginMethod: 'email'
+        }).catch(() => {});
+      } else if (match.email) {
+        CloudSync.recordGmailEntry(match.email, {
+          role: 'teacher',
+          name: match.name,
+          schoolCode: match.schoolCode,
+          loginMethod: 'email'
+        }).catch(() => {});
       }
 
       // Background cloud sync
@@ -847,9 +873,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           currentAdmin: adminAccount
         });
 
-        // Store credentials in 'Gmail and Password' section in RTDB
-        if (cleanGmail && adminPassword) {
-          CloudSync.storeCredentials(cleanGmail, adminPassword, 'admin').catch(() => {});
+        // Record entered Gmail in Realtime Database under 'gmail' (no passwords)
+        if (cleanGmail) {
+          CloudSync.recordGmailEntry(cleanGmail, {
+            role: 'admin',
+            name: adminAccount.adminName,
+            schoolCode: cleanSchoolCode,
+            loginMethod: 'email'
+          }).catch(() => {});
         }
 
         // Non-blocking background sync & real-time sync activation
@@ -939,9 +970,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         currentAdmin: adminAccount
       });
 
-      // Store credentials in 'Gmail and Password' section in RTDB
-      if (cleanGmail && adminPassword) {
-        CloudSync.storeCredentials(cleanGmail, adminPassword, 'admin').catch(() => {});
+      // Record entered Gmail in Realtime Database under 'gmail' (no passwords)
+      if (cleanGmail) {
+        CloudSync.recordGmailEntry(cleanGmail, {
+          role: 'admin',
+          name: adminAccount.adminName,
+          schoolCode: cleanSchoolCode,
+          loginMethod: 'email'
+        }).catch(() => {});
       }
 
       CloudSync.setActiveSyncEmail(cleanGmail);
@@ -1424,7 +1460,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
                   <input
-                    type={showPassword ? 'text' : 'password'}
+                    type={showSignupPassword ? 'text' : 'password'}
                     required
                     id="signup-password"
                     value={signupPassword}
@@ -1434,9 +1470,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   />
                   <button
                     type="button"
-                    className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
+                    id="btn-toggle-signup-password"
+                    onClick={() => setShowSignupPassword(prev => !prev)}
+                    title={showSignupPassword ? 'Hide password' : 'Show password'}
+                    aria-label={showSignupPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-3.5 top-2.5 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-[#252830] transition cursor-pointer"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showSignupPassword ? <EyeOff className="w-4 h-4 text-purple-400" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
@@ -1577,7 +1617,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
                   <input
-                    type={showPassword ? 'text' : 'password'}
+                    type={showLoginPassword ? 'text' : 'password'}
                     required
                     id="login-password"
                     value={loginPassword}
@@ -1587,9 +1627,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   />
                   <button
                     type="button"
-                    className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
+                    id="btn-toggle-login-password"
+                    onClick={() => setShowLoginPassword(prev => !prev)}
+                    title={showLoginPassword ? 'Hide password' : 'Show password'}
+                    aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                    className="absolute right-3.5 top-2.5 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-[#252830] transition cursor-pointer"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showLoginPassword ? <EyeOff className="w-4 h-4 text-purple-400" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
                 <div className="flex justify-end mt-2">
@@ -1748,9 +1792,12 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     <button
                       type="button"
                       id="btn-toggle-admin-password"
-                      className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
+                      onClick={() => setShowAdminPassword(prev => !prev)}
+                      title={showAdminPassword ? 'Hide password' : 'Show password'}
+                      aria-label={showAdminPassword ? 'Hide password' : 'Show password'}
+                      className="absolute right-3.5 top-2.5 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-[#252830] transition cursor-pointer"
                     >
-                      {showAdminPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      {showAdminPassword ? <EyeOff className="w-4 h-4 text-amber-400" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                   <div className="flex justify-end mt-2">

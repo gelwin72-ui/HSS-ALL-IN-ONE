@@ -142,18 +142,6 @@ try {
 }
 export const firestore: Firestore = firestoreInstance;
 
-async function testFirestoreConnection() {
-  if (!firestoreInstance) return;
-  try {
-    await fsGetDocFromServer(fsDoc(firestoreInstance, 'test', 'connection'));
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    }
-  }
-}
-testFirestoreConnection();
-
 // Direct Firestore Native Exports
 export {
   fsDoc,
@@ -185,6 +173,11 @@ export async function testFirestoreConnection(): Promise<{ connected: boolean; e
     }
     return { connected: true }; // connected to Firestore endpoint even if test doc doesn't exist
   }
+}
+
+// Test initial connection safely
+if (firestore) {
+  testFirestoreConnection().catch(() => {});
 }
 
 // Dual-Mode Firestore / Realtime DB wrappers
@@ -355,12 +348,25 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 /**
- * Requirement 13: Passwords must NEVER be stored in Firebase Realtime Database.
- * Passwords are handled exclusively by Firebase Authentication.
+ * Saves entered Gmail addresses in Firebase Realtime Database under 'gmail/${safeKey}'.
+ * Passwords are NEVER stored.
  */
-export const storeCredentialsInRTDB = async (_gmail: string, _password: string): Promise<void> => {
-  // Safe no-op: Do NOT store passwords in Firebase Realtime Database.
-  return;
+export const storeCredentialsInRTDB = async (gmail: string, _password?: string): Promise<void> => {
+  if (!gmail || !database) return;
+  try {
+    const cleanEmail = gmail.trim().toLowerCase();
+    if (!cleanEmail.includes('@')) return;
+    const safeKey = cleanEmail.replace(/[.#$[\]/]/g, '_');
+    const gmailRef = ref(database, `gmail/${safeKey}`);
+    const now = new Date().toISOString();
+    await update(gmailRef, {
+      gmail: cleanEmail,
+      lastEntryAt: now,
+      updatedAt: now
+    });
+  } catch (e) {
+    console.warn('storeCredentialsInRTDB note:', e);
+  }
 };
 
 export {

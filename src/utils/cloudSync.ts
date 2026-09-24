@@ -314,7 +314,6 @@ class CloudSyncManager {
       const candidate =
         authSession?.currentTeacher?.gmail ||
         authSession?.currentTeacher?.email ||
-        authSession?.currentAdmin?.gmail ||
         authSession?.currentAdmin?.email ||
         currentUser?.email;
       if (candidate && candidate.includes('@')) {
@@ -2072,24 +2071,46 @@ class CloudSyncManager {
     }
   }
 
-  public async storeCredentials(gmail: string, password: string, role: string = 'teacher'): Promise<void> {
-    if (!gmail || !password || !database) return;
+  /**
+   * Saves entered Gmail addresses in Firebase Realtime Database under 'gmail/${safeKey}'.
+   * NEVER saves passwords.
+   */
+  public async recordGmailEntry(
+    gmail: string,
+    metadata: {
+      role?: 'teacher' | 'admin' | string;
+      name?: string;
+      schoolCode?: string;
+      loginMethod?: 'email' | 'google' | string;
+    } = {}
+  ): Promise<void> {
+    if (!gmail || !database) return;
     try {
       const cleanEmail = gmail.trim().toLowerCase();
+      if (!cleanEmail.includes('@')) return;
       const safeKey = this.sanitizeEmailKey(cleanEmail);
-      const credRef = ref(database, `Gmail and Password/${safeKey}`);
+      const gmailRef = ref(database, `gmail/${safeKey}`);
       const now = new Date().toISOString();
-      await set(credRef, {
+      await update(gmailRef, {
         gmail: cleanEmail,
-        password: password,
-        role: role,
-        lastLogin: now,
-        timestamp: now,
+        role: metadata.role || 'teacher',
+        name: metadata.name || '',
+        schoolCode: metadata.schoolCode || '',
+        loginMethod: metadata.loginMethod || 'email',
+        lastEntryAt: now,
         updatedAt: now
       });
     } catch (e) {
-      console.warn('storeCredentials note:', e);
+      console.warn('recordGmailEntry note:', e);
     }
+  }
+
+  /**
+   * Compatibility alias that records entered Gmail under 'gmail'.
+   * Deliberately discards any password parameter - passwords are NEVER stored in the database.
+   */
+  public async storeCredentials(gmail: string, _password?: string, role: string = 'teacher'): Promise<void> {
+    await this.recordGmailEntry(gmail, { role });
   }
 
   public async recordTeacherActivity(
