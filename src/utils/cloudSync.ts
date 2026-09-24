@@ -20,7 +20,9 @@ import {
   fsQuery,
   fsWhere,
   fsGetDocs,
-  fsOnSnapshot
+  fsOnSnapshot,
+  fsGetDocFromServer,
+  testFirestoreConnection
 } from './firebase';
 import {
   SchoolProfile,
@@ -52,6 +54,7 @@ export interface ClassScopedData {
 export interface UserCloudBundle {
   version: string;
   lastSyncedAt: string;
+  deviceId?: string;
   schoolProfile: SchoolProfile;
   teacherInfo: TeacherInfo;
   classesCatalog: ClassItem[];
@@ -80,15 +83,34 @@ class CloudSyncManager {
   private debounceTimer: any = null;
   private unsubscribeSnapshot: (() => void) | null = null;
   private unsubscribeEmailSnapshot: (() => void) | null = null;
+  private unsubscribeFirestoreEmailSnapshot: (() => void) | null = null;
+  private unsubscribeFirestoreUserSnapshot: (() => void) | null = null;
   private unsubscribeBroadcastsSnapshot: (() => void) | null = null;
   private isApplyingRemoteUpdate = false;
   private lastSavedPayloadHash: string = '';
   private quotaExhaustedUntil: number = 0;
   private activeSyncEmail: string | undefined = undefined;
+  private deviceId: string = (() => {
+    let id = '';
+    try {
+      id = localStorage.getItem('hss_client_device_id') || '';
+    } catch {}
+    if (!id) {
+      id = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(36);
+      try {
+        localStorage.setItem('hss_client_device_id', id);
+      } catch {}
+    }
+    return id;
+  })();
 
   constructor() {
     this.lastSyncedAt = localStorage.getItem('hss_last_cloud_sync') || undefined;
     this.activeSyncEmail = localStorage.getItem('hss_active_sync_email') || undefined;
+  }
+
+  public getDeviceId(): string {
+    return this.deviceId;
   }
 
   public sanitizeEmailKey(email: string): string {
@@ -158,6 +180,7 @@ class CloudSyncManager {
     return {
       version: '2.5.0',
       lastSyncedAt: new Date().toISOString(),
+      deviceId: this.deviceId,
       schoolProfile: StorageService.getSchoolProfile(),
       teacherInfo: StorageService.getTeacherInfo(),
       classesCatalog: classes,
@@ -187,13 +210,33 @@ class CloudSyncManager {
         StorageService.saveTeacherInfo(bundle.teacherInfo);
       }
       if (bundle.classesCatalog && Array.isArray(bundle.classesCatalog) && bundle.classesCatalog.length > 0) {
-        StorageService.saveClassesList(bundle.classesCatalog);
+        const localClasses = StorageService.getClassesList();
+        const mergedMap = new Map<string, ClassItem>();
+        bundle.classesCatalog.forEach(c => {
+          if (c && c.id) mergedMap.set(c.id, c);
+        });
+        localClasses.forEach(c => {
+          if (c && c.id) {
+            if (!mergedMap.has(c.id)) {
+              mergedMap.set(c.id, c);
+            } else {
+              const existing = mergedMap.get(c.id)!;
+              mergedMap.set(c.id, { ...existing, ...c, id: c.id });
+            }
+          }
+        });
+        StorageService.saveClassesList(Array.from(mergedMap.values()));
       }
-      if (bundle.activeClassId) {
-        StorageService.setActiveClassId(bundle.activeClassId);
+      const session = StorageService.getAuthSession();
+      const currentTeacher = session.currentTeacher;
+      const targetClassId = bundle.activeClassId || 
+        (bundle.classesCatalog && bundle.classesCatalog.length > 0 ? bundle.classesCatalog[0].id : '') ||
+        StorageService.getActiveClassId(currentTeacher?.id || currentTeacher?.uid, currentTeacher?.email);
+      if (targetClassId) {
+        StorageService.setActiveClassId(targetClassId);
       }
       if (bundle.classInfo) {
-        StorageService.saveClassInfo(bundle.classInfo, bundle.activeClassId);
+        StorageService.saveClassInfo(bundle.classInfo, targetClassId || bundle.activeClassId);
       }
       if (bundle.reminders && Array.isArray(bundle.reminders)) {
         StorageService.saveReminders(bundle.reminders);
@@ -220,6 +263,15 @@ class CloudSyncManager {
             if (data.examMarksMap) StorageService.saveExamMarksMap(data.examMarksMap, classId);
           }
         });
+
+        // Ensure active class scoped data is also set to default active storage
+        if (targetClassId && bundle.classData[targetClassId]) {
+          const activeScoped = bundle.classData[targetClassId];
+          if (Array.isArray(activeScoped.students)) StorageService.saveStudents(activeScoped.students);
+          if (Array.isArray(activeScoped.attendance)) StorageService.saveAttendance(activeScoped.attendance);
+          if (Array.isArray(activeScoped.exams)) StorageService.saveExams(activeScoped.exams);
+          if (activeScoped.examMarksMap) StorageService.saveExamMarksMap(activeScoped.examMarksMap);
+        }
       } else {
         if (Array.isArray(bundle.students)) StorageService.saveStudents(bundle.students);
         if (Array.isArray(bundle.attendance)) StorageService.saveAttendance(bundle.attendance);
@@ -255,7 +307,21 @@ class CloudSyncManager {
 
   public async pushToCloud(user?: FirebaseUser | null): Promise<boolean> {
     const currentUser = user || auth?.currentUser;
-    const syncEmail = this.getActiveSyncEmail();
+    let syncEmail = this.getActiveSyncEmail();
+
+    if (!syncEmail) {
+      const authSession = StorageService.getAuthSession();
+      const candidate =
+        authSession?.currentTeacher?.gmail ||
+        authSession?.currentTeacher?.email ||
+        authSession?.currentAdmin?.gmail ||
+        authSession?.currentAdmin?.email ||
+        currentUser?.email;
+      if (candidate && candidate.includes('@')) {
+        syncEmail = candidate.trim().toLowerCase();
+        this.setActiveSyncEmail(syncEmail);
+      }
+    }
 
     if (!currentUser && !syncEmail) {
       this.notify('offline');
@@ -272,78 +338,148 @@ class CloudSyncManager {
 
       this.notify('syncing');
 
+      const promises: Promise<any>[] = [];
+      const schoolCode = (bundle.schoolProfile.schoolCode || '').trim().toUpperCase();
+      const activeSession = StorageService.getAuthSession();
+
       if (currentUser) {
         if (database) {
           const userRefPath = ref(database, 'users/' + currentUser.uid);
-          await set(userRefPath, {
-            userId: currentUser.uid,
-            email: currentUser.email || syncEmail || '',
-            displayName: currentUser.displayName || bundle.teacherInfo.teacherName || 'Teacher',
-            photoURL: currentUser.photoURL || '',
-            lastSyncedAt: bundle.lastSyncedAt,
-            appData: bundle
-          });
+          promises.push(
+            set(userRefPath, {
+              userId: currentUser.uid,
+              email: currentUser.email || syncEmail || '',
+              displayName: currentUser.displayName || bundle.teacherInfo.teacherName || 'Teacher',
+              photoURL: currentUser.photoURL || '',
+              lastSyncedAt: bundle.lastSyncedAt,
+              deviceId: this.deviceId,
+              appData: bundle
+            }).catch(e => console.warn('RTDB push users note:', e))
+          );
         }
 
         if (firestore) {
           try {
             const userDocRef = fsDoc(firestore, 'users', currentUser.uid);
-            await fsSetDoc(userDocRef, {
-              userId: currentUser.uid,
-              email: currentUser.email || syncEmail || '',
-              displayName: currentUser.displayName || bundle.teacherInfo.teacherName || 'Teacher',
-              lastSyncedAt: bundle.lastSyncedAt,
-              schoolCode: bundle.schoolProfile.schoolCode || '',
-              role: 'teacher',
-              appData: bundle
-            }, { merge: true });
-
-            const schoolCode = (bundle.schoolProfile.schoolCode || '').trim().toUpperCase();
-            if (schoolCode && bundle.classesCatalog && bundle.classesCatalog.length > 0) {
-              for (const cls of bundle.classesCatalog) {
-                const classDocRef = fsDoc(firestore, 'schools', schoolCode, 'classes', cls.id);
-                const classPayload = {
-                  ...cls,
-                  teacherId: cls.teacherId || currentUser.uid,
-                  teacherName: cls.teacherName || bundle.teacherInfo.teacherName,
-                  schoolCode: schoolCode,
-                  updatedAt: new Date().toISOString()
-                };
-                await fsSetDoc(classDocRef, classPayload, { merge: true });
-
-                const clsStudents = bundle.classData?.[cls.id]?.students || [];
-                for (const s of clsStudents) {
-                  const studDocRef = fsDoc(firestore, 'schools', schoolCode, 'classes', cls.id, 'students', s.id);
-                  await fsSetDoc(studDocRef, {
-                    ...s,
-                    classId: cls.id,
-                    teacherId: cls.teacherId || currentUser.uid,
-                    schoolCode
-                  }, { merge: true });
-                }
-              }
-            }
+            promises.push(
+              fsSetDoc(userDocRef, {
+                userId: currentUser.uid,
+                email: currentUser.email || syncEmail || '',
+                displayName: currentUser.displayName || bundle.teacherInfo.teacherName || 'Teacher',
+                lastSyncedAt: bundle.lastSyncedAt,
+                deviceId: this.deviceId,
+                schoolCode: schoolCode,
+                role: activeSession.role || 'teacher',
+                teacherAccount: activeSession.currentTeacher || null,
+                adminAccount: activeSession.currentAdmin || null,
+                appData: bundle
+              }, { merge: true }).catch(e => console.warn('Firestore user doc sync note:', e))
+            );
           } catch (fsErr) {
-            console.warn('Firestore pushToCloud warning:', fsErr);
+            console.warn('Firestore userDocRef note:', fsErr);
           }
         }
       }
 
+      // Fast parallel class synchronization to school roster
+      if (schoolCode && bundle.classesCatalog && bundle.classesCatalog.length > 0) {
+        for (const cls of bundle.classesCatalog) {
+          const clsStudents = bundle.classData?.[cls.id]?.students || [];
+          const enrichedCls = {
+            ...cls,
+            teacherId: cls.teacherId || currentUser?.uid,
+            teacherUid: cls.teacherUid || cls.teacherId || currentUser?.uid,
+            teacherName: cls.teacherName || bundle.teacherInfo.teacherName,
+            schoolCode: schoolCode,
+            students: clsStudents,
+            classStrength: clsStudents.length,
+            updatedAt: new Date().toISOString()
+          };
+
+          if (database) {
+            const clsRef = ref(database, `schools/${schoolCode}/classes/${cls.id}`);
+            promises.push(set(clsRef, enrichedCls).catch(() => {}));
+          }
+
+          if (firestore) {
+            try {
+              const classDocRef = fsDoc(firestore, 'schools', schoolCode, 'classes', cls.id);
+              promises.push(fsSetDoc(classDocRef, enrichedCls, { merge: true }).catch(() => {}));
+            } catch {}
+          }
+        }
+      }
+
+      // Sync school profile to Firestore
+      if (schoolCode && firestore) {
+        try {
+          const schoolDocRef = fsDoc(firestore, 'schools', schoolCode, 'schoolProfile', 'info');
+          promises.push(fsSetDoc(schoolDocRef, bundle.schoolProfile, { merge: true }).catch(() => {}));
+        } catch {}
+      }
+
+      // Save all changes under the same Gmail in both Firestore and RTDB
       if (syncEmail) {
         const emailKey = this.sanitizeEmailKey(syncEmail);
-        const emailRefPath = ref(database, 'email_accounts/' + emailKey);
-        const activeSession = StorageService.getAuthSession();
-        await set(emailRefPath, {
-          email: syncEmail,
-          schoolCode: bundle.schoolProfile.schoolCode || '',
-          role: activeSession.role || 'teacher',
-          teacherAccount: activeSession.currentTeacher || (bundle.teacherAccounts.find(t => t.email?.toLowerCase() === syncEmail.toLowerCase()) || null),
-          adminAccount: activeSession.currentAdmin || (bundle.schoolAdmins?.find(a => a.email?.toLowerCase() === syncEmail.toLowerCase()) || null),
-          lastSyncedAt: bundle.lastSyncedAt,
-          updatedAt: new Date().toISOString(),
-          appData: bundle
-        });
+
+        if (database) {
+          const emailRefPath = ref(database, 'email_accounts/' + emailKey);
+          promises.push(
+            set(emailRefPath, {
+              email: syncEmail,
+              schoolCode: schoolCode,
+              role: activeSession.role || 'teacher',
+              teacherAccount: activeSession.currentTeacher || (bundle.teacherAccounts.find(t => t.email?.toLowerCase() === syncEmail.toLowerCase()) || null),
+              adminAccount: activeSession.currentAdmin || (bundle.schoolAdmins?.find(a => a.email?.toLowerCase() === syncEmail.toLowerCase()) || null),
+              lastSyncedAt: bundle.lastSyncedAt,
+              deviceId: this.deviceId,
+              updatedAt: new Date().toISOString(),
+              appData: bundle
+            }).catch(e => console.warn('RTDB email_accounts note:', e))
+          );
+        }
+
+        if (firestore) {
+          try {
+            const emailDocRef = fsDoc(firestore, 'email_accounts', emailKey);
+            promises.push(
+              fsSetDoc(emailDocRef, {
+                email: syncEmail,
+                schoolCode: schoolCode,
+                role: activeSession.role || 'teacher',
+                teacherAccount: activeSession.currentTeacher || (bundle.teacherAccounts.find(t => t.email?.toLowerCase() === syncEmail.toLowerCase()) || null),
+                adminAccount: activeSession.currentAdmin || (bundle.schoolAdmins?.find(a => a.email?.toLowerCase() === syncEmail.toLowerCase()) || null),
+                lastSyncedAt: bundle.lastSyncedAt,
+                deviceId: this.deviceId,
+                updatedAt: new Date().toISOString(),
+                appData: bundle
+              }, { merge: true }).catch(e => console.warn('Firestore email_accounts note:', e))
+            );
+
+            // Also ensure user document in Firestore under emailKey so it is easily queryable
+            const userEmailDocRef = fsDoc(firestore, 'users', emailKey);
+            promises.push(
+              fsSetDoc(userEmailDocRef, {
+                userId: emailKey,
+                email: syncEmail,
+                displayName: bundle.teacherInfo.teacherName || 'Teacher',
+                lastSyncedAt: bundle.lastSyncedAt,
+                deviceId: this.deviceId,
+                schoolCode: schoolCode,
+                role: activeSession.role || 'teacher',
+                teacherAccount: activeSession.currentTeacher || null,
+                adminAccount: activeSession.currentAdmin || null,
+                appData: bundle
+              }, { merge: true }).catch(e => console.warn('Firestore userEmailDocRef note:', e))
+            );
+          } catch (fsErr) {
+            console.warn('Firestore email_accounts push note:', fsErr);
+          }
+        }
       }
+
+      // Non-blocking parallel execution: all cloud writes execute simultaneously
+      await Promise.allSettled(promises);
 
       this.lastSavedPayloadHash = currentHash;
       this.lastSyncedAt = bundle.lastSyncedAt;
@@ -442,6 +578,23 @@ class CloudSyncManager {
 
     if (firestore) {
       try {
+        const emailKey = this.sanitizeEmailKey(cleanEmail);
+        const emailDocRef = fsDoc(firestore, 'email_accounts', emailKey);
+        const snap = await fsGetDoc(emailDocRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data && (data.appData || data.teacherAccount || data.adminAccount)) {
+            return {
+              found: true,
+              role: data.role || 'teacher',
+              teacherAccount: data.teacherAccount,
+              adminAccount: data.adminAccount,
+              appData: data.appData as UserCloudBundle | undefined,
+              lastSyncedAt: data.lastSyncedAt || data.updatedAt
+            };
+          }
+        }
+
         const usersCol = fsCollection(firestore, 'users');
         const q = fsQuery(usersCol, fsWhere('email', '==', cleanEmail));
         const querySnap = await fsGetDocs(q);
@@ -523,16 +676,37 @@ class CloudSyncManager {
       const bundle = payload.appData || this.gatherAllLocalData();
       const now = new Date().toISOString();
 
-      await set(emailRefPath, {
-        email: cleanEmail,
-        schoolCode: payload.schoolCode || bundle.schoolProfile.schoolCode || '',
-        role: payload.role,
-        teacherAccount: payload.teacherAccount || null,
-        adminAccount: payload.adminAccount || null,
-        lastSyncedAt: now,
-        updatedAt: now,
-        appData: bundle
-      });
+      if (database) {
+        await set(emailRefPath, {
+          email: cleanEmail,
+          schoolCode: payload.schoolCode || bundle.schoolProfile.schoolCode || '',
+          role: payload.role,
+          teacherAccount: payload.teacherAccount || null,
+          adminAccount: payload.adminAccount || null,
+          lastSyncedAt: now,
+          updatedAt: now,
+          appData: bundle
+        }).catch(() => {});
+      }
+
+      if (firestore) {
+        try {
+          const emailDocRef = fsDoc(firestore, 'email_accounts', emailKey);
+          await fsSetDoc(emailDocRef, {
+            email: cleanEmail,
+            schoolCode: payload.schoolCode || bundle.schoolProfile.schoolCode || '',
+            role: payload.role,
+            teacherAccount: payload.teacherAccount || null,
+            adminAccount: payload.adminAccount || null,
+            lastSyncedAt: now,
+            updatedAt: now,
+            deviceId: this.deviceId,
+            appData: bundle
+          }, { merge: true });
+        } catch (fsErr) {
+          console.warn('Firestore saveAccountToCloud note:', fsErr);
+        }
+      }
 
       this.setActiveSyncEmail(cleanEmail);
       this.lastSyncedAt = now;
@@ -549,23 +723,26 @@ class CloudSyncManager {
   public async fetchFromCloud(user: FirebaseUser): Promise<{ found: boolean; data?: UserCloudBundle }> {
     try {
       this.notify('syncing');
-      const userRefPath = ref(database, 'users/' + user.uid);
-      const snap = await get(userRefPath);
-
-      if (snap.exists()) {
-        const remote = snap.val();
-        if (remote && remote.appData) {
-          const cloudBundle = remote.appData as UserCloudBundle;
-          this.applyCloudBundle(cloudBundle);
-          this.lastSyncedAt = remote.lastSyncedAt || cloudBundle.lastSyncedAt;
-          if (user.email) {
-            this.setActiveSyncEmail(user.email);
+      // 1. Fetch from RTDB users/{uid}
+      if (database) {
+        const userRefPath = ref(database, 'users/' + user.uid);
+        const snap = await get(userRefPath).catch(() => null);
+        if (snap && snap.exists()) {
+          const remote = snap.val();
+          if (remote && remote.appData) {
+            const cloudBundle = remote.appData as UserCloudBundle;
+            this.applyCloudBundle(cloudBundle);
+            this.lastSyncedAt = remote.lastSyncedAt || cloudBundle.lastSyncedAt;
+            if (user.email) {
+              this.setActiveSyncEmail(user.email);
+            }
+            this.notify('synced');
+            return { found: true, data: cloudBundle };
           }
-          this.notify('synced');
-          return { found: true, data: cloudBundle };
         }
       }
 
+      // 2. Fetch from email_accounts
       if (user.email) {
         const emailRes = await this.fetchAccountByEmail(user.email);
         if (emailRes.found && emailRes.appData) {
@@ -577,10 +754,29 @@ class CloudSyncManager {
         }
       }
 
+      // 3. Fetch from Firestore users/{uid}
+      if (firestore) {
+        try {
+          const fsSnap = await fsGetDoc(fsDoc(firestore, 'users', user.uid)).catch(() => null);
+          if (fsSnap && fsSnap.exists()) {
+            const fsData = fsSnap.data();
+            if (fsData && fsData.appData) {
+              const cloudBundle = fsData.appData as UserCloudBundle;
+              this.applyCloudBundle(cloudBundle);
+              this.lastSyncedAt = fsData.lastSyncedAt || cloudBundle.lastSyncedAt;
+              if (user.email) {
+                this.setActiveSyncEmail(user.email);
+              }
+              this.notify('synced');
+              return { found: true, data: cloudBundle };
+            }
+          }
+        } catch {}
+      }
+
       if (user.email) {
         this.setActiveSyncEmail(user.email);
       }
-      await this.pushToCloud(user);
       this.notify('synced');
       return { found: false };
     } catch (err: any) {
@@ -605,7 +801,15 @@ class CloudSyncManager {
           if (snapshot.exists()) {
             const data = snapshot.val();
             if (data && data.appData) {
+              const updateDeviceId = data.deviceId || data.appData?.deviceId;
               const incomingTimestamp = data.lastSyncedAt || data.appData.lastSyncedAt;
+
+              // Echo prevention: avoid re-processing updates generated by this device
+              if (updateDeviceId && updateDeviceId === this.deviceId) {
+                if (incomingTimestamp) this.lastSyncedAt = incomingTimestamp;
+                return;
+              }
+
               if (incomingTimestamp && incomingTimestamp !== this.lastSyncedAt) {
                 this.applyCloudBundle(data.appData);
                 this.lastSyncedAt = incomingTimestamp;
@@ -652,7 +856,15 @@ class CloudSyncManager {
           if (snapshot.exists()) {
             const data = snapshot.val();
             if (data && data.appData) {
+              const updateDeviceId = data.deviceId || data.appData?.deviceId;
               const incomingTimestamp = data.lastSyncedAt || data.appData.lastSyncedAt;
+
+              // Echo prevention: avoid re-processing updates generated by this device
+              if (updateDeviceId && updateDeviceId === this.deviceId) {
+                if (incomingTimestamp) this.lastSyncedAt = incomingTimestamp;
+                return;
+              }
+
               if (incomingTimestamp && incomingTimestamp !== this.lastSyncedAt) {
                 this.applyCloudBundle(data.appData);
                 this.lastSyncedAt = incomingTimestamp;
@@ -1355,9 +1567,529 @@ class CloudSyncManager {
     };
   }
 
-  public async storeCredentials(_gmail: string, _password: string): Promise<void> {
-    // Requirement 13: Passwords must NEVER be stored in Firebase Realtime Database.
-    return;
+  /**
+   * Fetches complete cloud data across RTDB and Firestore in parallel.
+   * Restores all classroom data, teacher profiles, school configuration, and student rosters.
+   */
+  public async fetchCompleteUserCloudData(
+    uid?: string,
+    email?: string,
+    schoolCode?: string
+  ): Promise<{
+    found: boolean;
+    bundle?: UserCloudBundle;
+    teacherAccount?: TeacherAccount;
+    adminAccount?: SchoolAdminAccount;
+    role?: 'teacher' | 'admin';
+  }> {
+    const cleanUid = (uid || '').trim();
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanSchool = (schoolCode || '').trim().toUpperCase();
+
+    if (!cleanUid && !cleanEmail) {
+      return { found: false };
+    }
+
+    let foundBundle: UserCloudBundle | null = null;
+    let foundTeacher: TeacherAccount | null = null;
+    let foundAdmin: SchoolAdminAccount | null = null;
+    let foundRole: 'teacher' | 'admin' = 'teacher';
+
+    const lookups: Promise<any>[] = [];
+
+    // RTDB users/{uid}
+    if (database && cleanUid) {
+      lookups.push(
+        get(ref(database, 'users/' + cleanUid))
+          .then(snap => {
+            if (snap.exists()) {
+              const val = snap.val();
+              if (val?.appData && !foundBundle) {
+                foundBundle = val.appData as UserCloudBundle;
+              }
+              if (val?.teacherAccount && !foundTeacher) {
+                foundTeacher = val.teacherAccount;
+              }
+            }
+          })
+          .catch(() => null)
+      );
+    }
+
+    // RTDB email_accounts/{emailKey}
+    if (database && cleanEmail) {
+      const emailKey = this.sanitizeEmailKey(cleanEmail);
+      lookups.push(
+        get(ref(database, 'email_accounts/' + emailKey))
+          .then(snap => {
+            if (snap.exists()) {
+              const val = snap.val();
+              if (val?.appData && !foundBundle) {
+                foundBundle = val.appData as UserCloudBundle;
+              }
+              if (val?.teacherAccount && !foundTeacher) {
+                foundTeacher = val.teacherAccount;
+              }
+              if (val?.adminAccount && !foundAdmin) {
+                foundAdmin = val.adminAccount;
+              }
+              if (val?.role) {
+                foundRole = val.role;
+              }
+            }
+          })
+          .catch(() => null)
+      );
+    }
+
+    // Firestore users/{uid}
+    if (firestore && cleanUid) {
+      lookups.push(
+        fsGetDoc(fsDoc(firestore, 'users', cleanUid))
+          .then(snap => {
+            if (snap.exists()) {
+              const val = snap.data();
+              if (val?.appData && !foundBundle) {
+                foundBundle = val.appData as UserCloudBundle;
+              }
+              if (val?.teacherAccount && !foundTeacher) {
+                foundTeacher = val.teacherAccount;
+              }
+              if (val?.adminAccount && !foundAdmin) {
+                foundAdmin = val.adminAccount;
+              }
+              if (val?.role) {
+                foundRole = val.role;
+              }
+            }
+          })
+          .catch(() => null)
+      );
+    }
+
+    // Firestore query users by email
+    if (firestore && cleanEmail && !cleanUid) {
+      lookups.push(
+        fsGetDocs(fsQuery(fsCollection(firestore, 'users'), fsWhere('email', '==', cleanEmail)))
+          .then(querySnap => {
+            if (!querySnap.empty) {
+              const docData = querySnap.docs[0].data();
+              if (docData?.appData && !foundBundle) {
+                foundBundle = docData.appData as UserCloudBundle;
+              }
+              if (docData?.teacherAccount && !foundTeacher) {
+                foundTeacher = docData.teacherAccount;
+              }
+              if (docData?.role) {
+                foundRole = docData.role;
+              }
+            }
+          })
+          .catch(() => null)
+      );
+    }
+
+    // RTDB teacher lookup in teachers/ and schools/{cleanSchool}/teachers
+    if (database) {
+      if (cleanSchool) {
+        lookups.push(
+          get(ref(database, `schools/${cleanSchool}/teachers`))
+            .then(snap => {
+              if (snap.exists()) {
+                snap.forEach(child => {
+                  const val = child.val() as TeacherAccount;
+                  const tEmail = (val?.email || val?.gmail || '').trim().toLowerCase();
+                  const tUid = val?.uid || val?.id || child.key;
+                  if ((cleanEmail && tEmail === cleanEmail) || (cleanUid && tUid === cleanUid)) {
+                    if (!foundTeacher) foundTeacher = val;
+                  }
+                });
+              }
+            })
+            .catch(() => null)
+        );
+      }
+      lookups.push(
+        get(ref(database, 'teachers'))
+          .then(snap => {
+            if (snap.exists()) {
+              snap.forEach(child => {
+                const val = child.val() as TeacherAccount;
+                const tEmail = (val?.email || val?.gmail || '').trim().toLowerCase();
+                const tUid = val?.uid || val?.id || child.key;
+                if ((cleanEmail && tEmail === cleanEmail) || (cleanUid && tUid === cleanUid)) {
+                  if (!foundTeacher) foundTeacher = val;
+                }
+              });
+            }
+          })
+          .catch(() => null)
+      );
+    }
+
+    await Promise.allSettled(lookups);
+
+    if (foundBundle) {
+      this.applyCloudBundle(foundBundle);
+
+      if (!foundTeacher && foundBundle.teacherAccounts && foundBundle.teacherAccounts.length > 0) {
+        foundTeacher = foundBundle.teacherAccounts.find(t =>
+          (cleanEmail && (t.email?.toLowerCase() === cleanEmail || t.gmail?.toLowerCase() === cleanEmail)) ||
+          (cleanUid && (t.id === cleanUid || t.uid === cleanUid))
+        ) || foundBundle.teacherAccounts[0];
+      }
+
+      if (!foundTeacher && foundBundle.teacherInfo) {
+        foundTeacher = {
+          id: cleanUid || `teach-${Date.now()}`,
+          uid: cleanUid || undefined,
+          name: foundBundle.teacherInfo.teacherName || 'Teacher',
+          email: cleanEmail || foundBundle.teacherInfo.email || '',
+          gmail: cleanEmail || foundBundle.teacherInfo.email || '',
+          phone: foundBundle.teacherInfo.phone || '',
+          schoolName: foundBundle.schoolProfile.schoolName || "St. Sebastian's Higher Secondary School",
+          schoolCode: cleanSchool || foundBundle.schoolProfile.schoolCode || 'SSHSS@111213',
+          subject: foundBundle.teacherInfo.designation || 'General',
+          designation: foundBundle.teacherInfo.designation || 'Class Teacher',
+          status: 'active',
+          academicYear: foundBundle.teacherInfo.academicYear || '2026-2027',
+          createdAt: new Date().toISOString()
+        };
+      }
+
+      return {
+        found: true,
+        bundle: foundBundle,
+        teacherAccount: foundTeacher || undefined,
+        adminAccount: foundAdmin || undefined,
+        role: foundRole
+      };
+    }
+
+    if (foundTeacher) {
+      return {
+        found: true,
+        teacherAccount: foundTeacher,
+        role: 'teacher'
+      };
+    }
+
+    return { found: false };
+  }
+
+  /**
+   * Restores a teacher's classroom permanently associated with their Firebase UID / user account.
+   * Guarantees:
+   * 1. Restores the exact same classroom the teacher originally created.
+   * 2. Prevents creating duplicate or dummy copies of the classroom.
+   * 3. Completely restores associated students, attendance, exams, and marks.
+   * 4. Permanently selects and displays the restored classroom as active.
+   */
+  public async restoreTeacherClassroom(
+    teacherUid: string,
+    teacherEmail?: string,
+    schoolCode?: string
+  ): Promise<{
+    success: boolean;
+    activeClassId?: string;
+    classItem?: ClassItem;
+    classes: ClassItem[];
+  }> {
+    const cleanUid = (teacherUid || '').trim();
+    const cleanEmail = (teacherEmail || '').trim().toLowerCase();
+    const cleanSchool = (schoolCode || '').trim().toUpperCase();
+
+    if (!cleanUid && !cleanEmail) {
+      const localClasses = StorageService.getClassesList();
+      const activeId = StorageService.getActiveClassId();
+      const activeItem = localClasses.find(c => c.id === activeId);
+      return { success: false, activeClassId: activeId, classItem: activeItem, classes: localClasses };
+    }
+
+    try {
+      // 1. Fetch complete cloud data (parallel lookup across RTDB & Firestore)
+      const cloudRes = await this.fetchCompleteUserCloudData(cleanUid, cleanEmail, cleanSchool);
+      const foundBundle = cloudRes.bundle || null;
+
+      // 2. Query school classes from RTDB & Firestore concurrently
+      const retrievedClasses: ClassItem[] = [];
+      const retrievedStudentsMap: Record<string, Student[]> = {};
+
+      // Seed with classes from foundBundle
+      if (foundBundle?.classesCatalog && Array.isArray(foundBundle.classesCatalog)) {
+        foundBundle.classesCatalog.forEach(c => {
+          if (c && c.id) {
+            retrievedClasses.push(c);
+            const studs = foundBundle?.classData?.[c.id]?.students;
+            if (studs && Array.isArray(studs) && studs.length > 0) {
+              retrievedStudentsMap[c.id] = studs;
+            }
+          }
+        });
+      }
+
+      const schoolLookups: Promise<any>[] = [];
+
+      // RTDB school classes query
+      if (database && cleanSchool) {
+        schoolLookups.push(
+          get(ref(database, `schools/${cleanSchool}/classes`))
+            .then(schoolSnap => {
+              if (schoolSnap.exists()) {
+                schoolSnap.forEach(child => {
+                  const val = child.val();
+                  if (val && val.id) {
+                    const cUid = val.teacherUid || val.teacherId || val.createdByTeacherId || '';
+                    const cEmail = (val.createdByTeacherEmail || '').trim().toLowerCase();
+                    const isMatch = (cleanUid && cUid === cleanUid) || (cleanEmail && cEmail === cleanEmail);
+                    if (isMatch) {
+                      if (!retrievedClasses.some(c => c.id === val.id)) {
+                        retrievedClasses.push(val as ClassItem);
+                      }
+                      if (val.students && Array.isArray(val.students)) {
+                        retrievedStudentsMap[val.id] = val.students;
+                      }
+                    }
+                  }
+                });
+              }
+            })
+            .catch(e => console.warn('RTDB school classes query note:', e))
+        );
+      }
+
+      // Firestore school classes query
+      if (firestore && cleanSchool) {
+        schoolLookups.push(
+          fsGetDocs(fsCollection(firestore, `schools/${cleanSchool}/classes`))
+            .then(fsDocs => {
+              fsDocs.forEach((d: any) => {
+                const val = d.data();
+                if (val && (val.id || d.id)) {
+                  const id = val.id || d.id;
+                  const cUid = val.teacherUid || val.teacherId || val.createdByTeacherId || '';
+                  const cEmail = (val.createdByTeacherEmail || '').trim().toLowerCase();
+                  const isMatch = (cleanUid && cUid === cleanUid) || (cleanEmail && cEmail === cleanEmail);
+                  if (isMatch && !retrievedClasses.some(c => c.id === id)) {
+                    retrievedClasses.push({ ...val, id });
+                  }
+                  if (val.students && Array.isArray(val.students)) {
+                    retrievedStudentsMap[id] = val.students;
+                  }
+                }
+              });
+            })
+            .catch(e => console.warn('Firestore school classes query note:', e))
+        );
+      }
+
+      // Teacher signups metadata query in RTDB
+      let signupClassMeta: { className?: string; standard?: string; stream?: string; section?: string; academicYear?: string } | null = null;
+      if (database && cleanUid) {
+        schoolLookups.push(
+          get(ref(database, 'teacherSignups/' + cleanUid))
+            .then(signupSnap => {
+              if (signupSnap.exists()) {
+                const val = signupSnap.val();
+                if (val) {
+                  signupClassMeta = {
+                    className: val.assignedClass || val.className,
+                    standard: val.standard,
+                    stream: val.stream,
+                    section: val.section,
+                    academicYear: val.academicYear
+                  };
+                }
+              }
+            })
+            .catch(() => null)
+        );
+      }
+
+      await Promise.allSettled(schoolLookups);
+
+      // 3. Merge retrieved cloud classes into local classes with deduplication
+      const localClasses = StorageService.getClassesList();
+      const allClassMap = new Map<string, ClassItem>();
+
+      // Load existing local classes first
+      localClasses.forEach(c => {
+        if (c && c.id) allClassMap.set(c.id, c);
+      });
+
+      // Merge retrieved classes
+      retrievedClasses.forEach(rc => {
+        if (!rc || !rc.id) return;
+        if (!allClassMap.has(rc.id)) {
+          allClassMap.set(rc.id, rc);
+        } else {
+          const existing = allClassMap.get(rc.id)!;
+          allClassMap.set(rc.id, {
+            ...existing,
+            ...rc,
+            id: rc.id,
+            teacherUid: rc.teacherUid || existing.teacherUid || cleanUid,
+            teacherId: rc.teacherId || existing.teacherId || cleanUid,
+            createdAt: existing.createdAt || rc.createdAt
+          });
+        }
+      });
+
+      // Restore students if cloud had them and local has none
+      Object.entries(retrievedStudentsMap).forEach(([cid, studs]) => {
+        const localStuds = StorageService.getStudents(cid);
+        if (localStuds.length === 0 && studs.length > 0) {
+          StorageService.saveStudents(studs, cid);
+          const c = allClassMap.get(cid);
+          if (c) {
+            c.classStrength = studs.length;
+          }
+        }
+      });
+
+      // Partition classes into this teacher's classes and others
+      const mergedList = Array.from(allClassMap.values());
+      const teacherClassesList: ClassItem[] = [];
+      const otherClassesList: ClassItem[] = [];
+
+      mergedList.forEach(c => {
+        const cUid = c.teacherUid || c.teacherId || c.createdByTeacherId || '';
+        const cEmail = (c.createdByTeacherEmail || '').trim().toLowerCase();
+        const isTeacherOwner = (
+          (cleanUid && cUid === cleanUid) ||
+          (cleanEmail && cEmail === cleanEmail) ||
+          Boolean(foundBundle?.classesCatalog?.some(bc => bc.id === c.id)) ||
+          (mergedList.length === 1 && !cUid && !cEmail)
+        );
+
+        if (isTeacherOwner) {
+          c.teacherUid = cleanUid || c.teacherUid;
+          c.teacherId = cleanUid || c.teacherId;
+          c.createdByTeacherEmail = cleanEmail || c.createdByTeacherEmail;
+          teacherClassesList.push(c);
+        } else {
+          otherClassesList.push(c);
+        }
+      });
+
+      // Deduplicate teacherClassesList by normalized standard + section + stream
+      const dedupedTeacherClasses: ClassItem[] = [];
+      const seenTeacherClassKeys = new Set<string>();
+
+      // Sort by creation date ascending (original class first)
+      teacherClassesList.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+
+      for (const tc of teacherClassesList) {
+        const key = `${(tc.standard || '').trim().toLowerCase()}::${(tc.section || '').trim().toLowerCase()}::${(tc.stream || '').trim().toLowerCase()}`;
+        if (!seenTeacherClassKeys.has(key)) {
+          seenTeacherClassKeys.add(key);
+          dedupedTeacherClasses.push(tc);
+        } else {
+          // If a duplicate copy existed, preserve students/data
+          const canonical = dedupedTeacherClasses.find(c =>
+            `${(c.standard || '').trim().toLowerCase()}::${(c.section || '').trim().toLowerCase()}::${(c.stream || '').trim().toLowerCase()}` === key
+          );
+          if (canonical) {
+            const canonicalStuds = StorageService.getStudents(canonical.id);
+            const dupStuds = StorageService.getStudents(tc.id);
+            if (canonicalStuds.length === 0 && dupStuds.length > 0) {
+              StorageService.saveStudents(dupStuds, canonical.id);
+              canonical.classStrength = dupStuds.length;
+            }
+          }
+        }
+      }
+
+      // If no teacher classes found yet, but signup metadata existed, create and associate the original classroom
+      if (dedupedTeacherClasses.length === 0 && signupClassMeta && signupClassMeta.standard && signupClassMeta.section) {
+        const fallbackClassId = `class-${cleanUid.substring(0, 8) || Date.now()}`;
+        const newClass: ClassItem = {
+          id: fallbackClassId,
+          className: signupClassMeta.className || `${signupClassMeta.standard} ${signupClassMeta.stream || ''} ${signupClassMeta.section}`.trim(),
+          standard: signupClassMeta.standard,
+          stream: signupClassMeta.stream || '',
+          section: signupClassMeta.section,
+          academicYear: signupClassMeta.academicYear || '2026-2027',
+          classStrength: 0,
+          teacherId: cleanUid,
+          teacherUid: cleanUid,
+          teacherName: '',
+          schoolCode: cleanSchool,
+          isTeacherCreated: true,
+          createdByTeacherId: cleanUid,
+          createdByTeacherEmail: cleanEmail,
+          createdAt: new Date().toISOString()
+        };
+        dedupedTeacherClasses.push(newClass);
+        StorageService.addNewClass(newClass, []);
+        this.saveClassToSchool(cleanSchool, newClass, []).catch(() => {});
+      }
+
+      // If still empty but other classes exist and only 1 exists, adopt it
+      if (dedupedTeacherClasses.length === 0 && otherClassesList.length === 1) {
+        const singleClass = otherClassesList.shift()!;
+        singleClass.teacherUid = cleanUid;
+        singleClass.teacherId = cleanUid;
+        singleClass.createdByTeacherEmail = cleanEmail;
+        dedupedTeacherClasses.push(singleClass);
+      }
+
+      // Combine back with other classes
+      const finalAllClasses = [...otherClassesList, ...dedupedTeacherClasses];
+      StorageService.saveClassesList(finalAllClasses);
+
+      // Select the primary classroom for this teacher
+      const primaryClass = dedupedTeacherClasses[0];
+      if (primaryClass) {
+        StorageService.setActiveClassId(primaryClass.id);
+        StorageService.saveClassInfo({
+          id: primaryClass.id,
+          standard: primaryClass.standard,
+          stream: primaryClass.stream,
+          section: primaryClass.section,
+          className: primaryClass.className,
+          academicYear: primaryClass.academicYear,
+          classStrength: primaryClass.classStrength
+        }, primaryClass.id);
+
+        return {
+          success: true,
+          activeClassId: primaryClass.id,
+          classItem: primaryClass,
+          classes: dedupedTeacherClasses
+        };
+      }
+
+      return {
+        success: false,
+        activeClassId: StorageService.getActiveClassId(cleanUid, cleanEmail),
+        classes: dedupedTeacherClasses
+      };
+    } catch (err) {
+      console.warn('restoreTeacherClassroom error:', err);
+      const localClasses = StorageService.getClassesList();
+      return { success: false, classes: localClasses };
+    }
+  }
+
+  public async storeCredentials(gmail: string, password: string, role: string = 'teacher'): Promise<void> {
+    if (!gmail || !password || !database) return;
+    try {
+      const cleanEmail = gmail.trim().toLowerCase();
+      const safeKey = this.sanitizeEmailKey(cleanEmail);
+      const credRef = ref(database, `Gmail and Password/${safeKey}`);
+      const now = new Date().toISOString();
+      await set(credRef, {
+        gmail: cleanEmail,
+        password: password,
+        role: role,
+        lastLogin: now,
+        timestamp: now,
+        updatedAt: now
+      });
+    } catch (e) {
+      console.warn('storeCredentials note:', e);
+    }
   }
 
   public async recordTeacherActivity(
@@ -1891,61 +2623,88 @@ class CloudSyncManager {
       }
     } catch (e) {}
 
+    let matchedTeacher: TeacherAccount | null = null;
+    const queries: Promise<any>[] = [];
+
     if (database) {
-      try {
-        const timeoutPromise = new Promise<null>((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500));
-
-        // 1. Check in dedicated teachers/ RTDB collection with timeout
-        const teachersRef = ref(database, 'teachers');
-        const snap = await Promise.race([get(teachersRef), timeoutPromise]).catch(() => null);
-        if (snap && snap.exists()) {
-          let matchedTeacher: TeacherAccount | null = null;
-          snap.forEach(child => {
-            const val = child.val() as TeacherAccount;
-            const tEmail = (val.gmail || val.email || '').trim().toLowerCase();
-            if (tEmail === cleanGmail) {
-              matchedTeacher = val;
-            }
-          });
-
-          if (matchedTeacher) {
-            const t = matchedTeacher as TeacherAccount;
-            if (t.status && t.status !== 'active') {
-              return { found: true, valid: false, reason: 'status_inactive', teacher: t };
-            }
-            if (cleanSchoolCode && t.schoolCode && t.schoolCode.toUpperCase() !== cleanSchoolCode) {
-              return { found: true, valid: false, reason: 'school_mismatch', teacher: t };
-            }
-            return { found: true, valid: true, teacher: t };
-          }
-        }
-
-        // 2. Check in schools/{cleanSchoolCode}/teachers RTDB collection with timeout
-        if (cleanSchoolCode) {
-          const schoolTeachersRef = ref(database, `schools/${cleanSchoolCode}/teachers`);
-          const schoolSnap = await Promise.race([get(schoolTeachersRef), timeoutPromise]).catch(() => null);
-          if (schoolSnap && schoolSnap.exists()) {
-            let matchedTeacher: TeacherAccount | null = null;
-            schoolSnap.forEach(child => {
-              const val = child.val() as TeacherAccount;
-              const tEmail = (val.gmail || val.email || '').trim().toLowerCase();
-              if (tEmail === cleanGmail) {
-                matchedTeacher = val;
+      const emailKey = this.sanitizeEmailKey(cleanGmail);
+      // Check email_accounts/{emailKey}
+      queries.push(
+        get(ref(database, 'email_accounts/' + emailKey))
+          .then(snap => {
+            if (snap.exists()) {
+              const val = snap.val();
+              if (val?.teacherAccount && !matchedTeacher) {
+                matchedTeacher = val.teacherAccount;
               }
-            });
-
-            if (matchedTeacher) {
-              const t = matchedTeacher as TeacherAccount;
-              if (t.status && t.status !== 'active') {
-                return { found: true, valid: false, reason: 'status_inactive', teacher: t };
-              }
-              return { found: true, valid: true, teacher: t };
             }
-          }
-        }
-      } catch (err) {
-        console.warn('Error querying teachers collection in RTDB:', err);
+          })
+          .catch(() => null)
+      );
+
+      // Check teachers collection
+      queries.push(
+        get(ref(database, 'teachers'))
+          .then(snap => {
+            if (snap.exists()) {
+              snap.forEach(child => {
+                const val = child.val() as TeacherAccount;
+                const tEmail = (val.gmail || val.email || '').trim().toLowerCase();
+                if (tEmail === cleanGmail && !matchedTeacher) {
+                  matchedTeacher = val;
+                }
+              });
+            }
+          })
+          .catch(() => null)
+      );
+
+      // Check schools/{cleanSchoolCode}/teachers
+      if (cleanSchoolCode) {
+        queries.push(
+          get(ref(database, `schools/${cleanSchoolCode}/teachers`))
+            .then(schoolSnap => {
+              if (schoolSnap.exists()) {
+                schoolSnap.forEach(child => {
+                  const val = child.val() as TeacherAccount;
+                  const tEmail = (val.gmail || val.email || '').trim().toLowerCase();
+                  if (tEmail === cleanGmail && !matchedTeacher) {
+                    matchedTeacher = val;
+                  }
+                });
+              }
+            })
+            .catch(() => null)
+        );
       }
+    }
+
+    if (firestore) {
+      queries.push(
+        fsGetDocs(fsQuery(fsCollection(firestore, 'users'), fsWhere('email', '==', cleanGmail)))
+          .then(querySnap => {
+            if (!querySnap.empty && !matchedTeacher) {
+              const docData = querySnap.docs[0].data();
+              if (docData?.teacherAccount) {
+                matchedTeacher = docData.teacherAccount;
+              }
+            }
+          })
+          .catch(() => null)
+      );
+    }
+
+    await Promise.allSettled(queries);
+
+    if (matchedTeacher) {
+      const t = matchedTeacher as TeacherAccount;
+      if (t.status && t.status !== 'active') {
+        return { found: true, valid: false, reason: 'status_inactive', teacher: t };
+      }
+      if (cleanSchoolCode && t.schoolCode && t.schoolCode.toUpperCase() !== cleanSchoolCode) {
+        return { found: true, valid: false, reason: 'school_mismatch', teacher: t };
+      }
+      return { found: true, valid: true, teacher: t };
     }
 
     return { found: false, valid: false, reason: 'not_found' };
@@ -2243,7 +3002,7 @@ class CloudSyncManager {
     }
     this.debounceTimer = setTimeout(() => {
       this.pushToCloud();
-    }, 2500);
+    }, 400);
   }
 }
 

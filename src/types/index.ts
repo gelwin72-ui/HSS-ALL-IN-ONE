@@ -18,6 +18,7 @@ export interface TeacherAccount {
   stream?: string;
   section?: string;
   assignedClass?: string;
+  teacherClassId?: string;
   designation: string;
   password?: string;
   specializationSubjects?: string[];
@@ -150,6 +151,8 @@ export interface Student {
   address: string;
   bloodGroup?: string;
   notes?: string;
+  photoUrl?: string;
+  avatar?: string;
   createdAt: string;
   classId?: string;
   teacherId?: string;

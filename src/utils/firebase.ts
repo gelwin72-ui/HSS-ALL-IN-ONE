@@ -44,6 +44,7 @@ import {
   onSnapshot as fsOnSnapshot,
   orderBy as fsOrderBy,
   serverTimestamp as fsServerTimestamp,
+  getDocFromServer as fsGetDocFromServer,
   Firestore,
   DocumentReference,
   CollectionReference,
@@ -141,6 +142,18 @@ try {
 }
 export const firestore: Firestore = firestoreInstance;
 
+async function testFirestoreConnection() {
+  if (!firestoreInstance) return;
+  try {
+    await fsGetDocFromServer(fsDoc(firestoreInstance, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
+    }
+  }
+}
+testFirestoreConnection();
+
 // Direct Firestore Native Exports
 export {
   fsDoc,
@@ -155,8 +168,24 @@ export {
   fsAddDoc,
   fsOnSnapshot,
   fsOrderBy,
-  fsServerTimestamp
+  fsServerTimestamp,
+  fsGetDocFromServer
 };
+
+export async function testFirestoreConnection(): Promise<{ connected: boolean; error?: string }> {
+  if (!firestore) return { connected: false, error: 'Firestore not initialized' };
+  try {
+    const testDoc = fsDoc(firestore, 'test', 'connection');
+    await fsGetDocFromServer(testDoc).catch(() => null);
+    return { connected: true };
+  } catch (error: any) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.warn('Firestore client appears offline:', error.message);
+      return { connected: false, error: 'Client is offline' };
+    }
+    return { connected: true }; // connected to Firestore endpoint even if test doc doesn't exist
+  }
+}
 
 // Dual-Mode Firestore / Realtime DB wrappers
 export function doc(dbRefOrTarget: any, ...pathSegments: string[]) {

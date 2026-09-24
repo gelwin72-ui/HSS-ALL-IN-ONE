@@ -1,5 +1,25 @@
 {
   "entities": {
+    "files": {
+      "title": "Cloud Saved Files & Backups",
+      "description": "JSON database backups, CSV exports, student documents, and app snapshots saved to Firestore",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileType": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "size": { "type": "number" },
+        "content": { "type": "string" },
+        "email": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "summary": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "fileName", "email", "content"]
+    },
     "users": {
       "title": "User Data & Role Authorization",
       "description": "User profile with role-based access control (RBAC), schoolCode tenancy, and active status keyed by Firebase Authentication UID",
@@ -130,6 +150,24 @@
         "admissionNo": { "type": "string" }
       },
       "required": ["id", "rollNo", "name", "schoolCode"]
+    },
+    "cloud_files": {
+      "title": "Cloud Saved Files & Backups",
+      "description": "Database backup files, exported records, documents, and attachments stored in Firestore for a user Gmail and school",
+      "properties": {
+        "id": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileType": { "type": "string" },
+        "fileSize": { "type": "number" },
+        "data": { "type": "string" },
+        "email": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "userId": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "uploadedAt": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "fileName", "email", "data", "uploadedAt"]
     }
   },
   "firestore": {
@@ -140,6 +178,10 @@
     "/email_accounts/{emailKey}": {
       "schema": "email_accounts",
       "description": "Multi-device account and dataset keyed by normalized email"
+    },
+    "/cloud_files/{fileId}": {
+      "schema": "cloud_files",
+      "description": "Saved files, database snapshots, and exports stored in Firestore"
     },
     "/broadcasts/{broadcastId}": {
       "schema": "broadcasts",

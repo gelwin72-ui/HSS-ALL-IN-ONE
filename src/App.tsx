@@ -138,14 +138,24 @@ export function App() {
       try {
         unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
           if (firebaseUser) {
-            // Pull latest cloud state
-            await CloudSync.fetchFromCloud(firebaseUser);
-            refreshAllState();
+            const currentSession = StorageService.getAuthSession();
+            if (currentSession.isLoggedIn && currentSession.role === 'teacher') {
+              const schoolProfile = StorageService.getSchoolProfile();
+              await CloudSync.restoreTeacherClassroom(firebaseUser.uid, firebaseUser.email || undefined, schoolProfile.schoolCode);
+            } else {
+              // Pull latest cloud state
+              await CloudSync.fetchFromCloud(firebaseUser);
+            }
+            const activeTeacher = StorageService.getAuthSession().currentTeacher;
+            const activeClass = StorageService.getActiveClassId(activeTeacher?.id || activeTeacher?.uid || firebaseUser.uid, activeTeacher?.email || firebaseUser.email || undefined);
+            refreshAllState(activeClass);
             const schoolProfile = StorageService.getSchoolProfile();
             requestAndSaveFCMToken(firebaseUser.uid, schoolProfile.schoolCode).catch(() => {});
             // Start listening to real-time changes across devices
             CloudSync.startRealtimeSync(firebaseUser, () => {
-              refreshAllState();
+              const teacher = StorageService.getAuthSession().currentTeacher;
+              const liveClass = StorageService.getActiveClassId(teacher?.id || teacher?.uid, teacher?.email);
+              refreshAllState(liveClass);
               showToast('Data synced in real-time with Google Account!', 'info');
             });
           }
@@ -191,18 +201,25 @@ export function App() {
 
   // Teacher Login / Signup Success Handler
   const handleTeacherLoginSuccess = (account: TeacherAccount) => {
+    const uid = account.id || account.uid || auth?.currentUser?.uid || 'user';
+    const email = account.email || account.gmail || '';
+    const targetClassId = account.teacherClassId || StorageService.getActiveClassId(uid, email);
+    if (targetClassId) {
+      StorageService.setActiveClassId(targetClassId);
+    }
+    refreshAllState(targetClassId);
+
     if (account.email) {
       CloudSync.setActiveSyncEmail(account.email);
       CloudSync.startRealtimeEmailSync(account.email, () => {
-        refreshAllState();
+        const activeClass = StorageService.getActiveClassId(uid, email);
+        refreshAllState(activeClass);
         showToast('Multi-device sync updated across devices.', 'info');
       });
     }
-    refreshAllState();
     setAuthRole('teacher');
     setCurrentAdmin(null);
     setIsAuthenticated(true);
-    const uid = account.id || account.uid || auth?.currentUser?.uid || 'user';
     const schoolCode = account.schoolCode || StorageService.getSchoolProfile().schoolCode;
     requestAndSaveFCMToken(uid, schoolCode).catch(() => {});
     setOneSignalUser({

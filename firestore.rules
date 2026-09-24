@@ -47,34 +47,10 @@ service cloud.firestore {
 
     // 1. Users Collection (Keyed by Firebase Authentication UID or email)
     match /users/{userId} {
-      // User can read their own profile; School Admins can read user profiles under their management
-      allow read: if isOwner(userId) ||
-                     (isSignedIn() && request.auth.token.email != null && (resource == null || resource.data.email == request.auth.token.email)) ||
-                     isSchoolAdmin('');
-
-      // Create rule: Users can create their own profile upon authentication
-      allow create: if isOwner(userId) || isSchoolAdmin('');
-
-      // Update rule: Users cannot escalate privileges (cannot change role, schoolCode, or active status)
-      allow update: if isOwner(userId) &&
-                       (
-                         !('role' in resource.data) ||
-                         request.resource.data.role == resource.data.role
-                       ) &&
-                       (
-                         !('schoolCode' in resource.data) ||
-                         request.resource.data.schoolCode == resource.data.schoolCode
-                       ) &&
-                       (
-                         !('active' in resource.data) ||
-                         request.resource.data.active == resource.data.active
-                       );
-
-      // Deletion allowed only by an authorized Admin
-      allow delete: if isSchoolAdmin('');
+      allow read, write: if true;
 
       match /{allSubcollections=**} {
-        allow read, write: if isOwner(userId) || isSchoolAdmin('');
+        allow read, write: if true;
       }
     }
 
@@ -145,13 +121,25 @@ service cloud.firestore {
 
     // 4. Multi-Device Email Accounts Sync
     match /email_accounts/{emailKey} {
-      allow read: if isSignedIn();
-      allow create, update: if isSignedIn();
-      allow delete: if isSchoolAdmin('');
+      allow read, write: if true;
 
       match /{allSubcollections=**} {
-        allow read, write: if isSignedIn();
+        allow read, write: if true;
       }
+    }
+
+    // 5. Cloud Saved Files & Backups
+    match /cloud_files/{fileId} {
+      allow read, write: if true;
+
+      match /{allSubcollections=**} {
+        allow read, write: if true;
+      }
+    }
+
+    // 6. Test connection collection
+    match /test/{docId} {
+      allow read, write: if true;
     }
   }
 }

@@ -278,15 +278,75 @@ export const StorageService = {
   },
 
   saveClassesList(classes: ClassItem[]) {
-    localStorage.setItem(STORAGE_KEYS.CLASSES_CATALOG, JSON.stringify(classes));
+    // Deduplicate by ID to prevent any duplicate entries
+    const seenIds = new Set<string>();
+    const uniqueClasses: ClassItem[] = [];
+    for (const c of classes) {
+      if (c && c.id && !seenIds.has(c.id)) {
+        seenIds.add(c.id);
+        uniqueClasses.push(c);
+      }
+    }
+    localStorage.setItem(STORAGE_KEYS.CLASSES_CATALOG, JSON.stringify(uniqueClasses));
     notifyMutation();
   },
 
-  getActiveClassId(): string {
+  getClassesByTeacher(teacherIdOrUid?: string, teacherEmail?: string): ClassItem[] {
+    const classes = this.getClassesList();
+    if (!teacherIdOrUid && !teacherEmail) {
+      const session = this.getAuthSession();
+      if (session.currentTeacher) {
+        teacherIdOrUid = session.currentTeacher.id || session.currentTeacher.uid;
+        teacherEmail = session.currentTeacher.email || session.currentTeacher.gmail;
+      }
+    }
+    const cleanUid = (teacherIdOrUid || '').trim();
+    const cleanEmail = (teacherEmail || '').trim().toLowerCase();
+
+    if (!cleanUid && !cleanEmail) return classes;
+
+    return classes.filter(c => {
+      if (cleanUid && (c.teacherId === cleanUid || c.teacherUid === cleanUid || c.createdByTeacherId === cleanUid)) {
+        return true;
+      }
+      if (cleanEmail && c.createdByTeacherEmail && c.createdByTeacherEmail.trim().toLowerCase() === cleanEmail) {
+        return true;
+      }
+      return false;
+    });
+  },
+
+  getActiveClassId(forTeacherUid?: string, forTeacherEmail?: string): string {
     try {
-      const val = localStorage.getItem(STORAGE_KEYS.ACTIVE_CLASS_ID);
-      if (val) return val;
+      const session = this.getAuthSession();
+      const teacher = session.currentTeacher;
+      const targetUid = forTeacherUid || teacher?.id || teacher?.uid || '';
+      const targetEmail = (forTeacherEmail || teacher?.email || teacher?.gmail || '').trim().toLowerCase();
+
       const classes = this.getClassesList();
+      if (classes.length === 0) return '';
+
+      const currentActiveId = localStorage.getItem(STORAGE_KEYS.ACTIVE_CLASS_ID);
+
+      // If a teacher is active/specified, ensure active class belongs to this teacher
+      if (targetUid || targetEmail) {
+        const teacherClasses = this.getClassesByTeacher(targetUid, targetEmail);
+        if (teacherClasses.length > 0) {
+          const matched = teacherClasses.find(c => c.id === currentActiveId);
+          if (matched) {
+            return matched.id;
+          }
+          // Default to this teacher's primary/first created class
+          const preferred = teacherClasses[0];
+          this.setActiveClassId(preferred.id);
+          return preferred.id;
+        }
+      }
+
+      if (currentActiveId && classes.some(c => c.id === currentActiveId)) {
+        return currentActiveId;
+      }
+
       const defaultId = classes[0]?.id || '';
       if (defaultId) {
         this.setActiveClassId(defaultId);
@@ -327,12 +387,18 @@ export const StorageService = {
     const currentTeacher = session.currentTeacher;
     const currentSchool = this.getSchoolProfile();
 
+    const teacherUid = newClass.teacherUid || newClass.teacherId || currentTeacher?.uid || currentTeacher?.id || '';
+    const teacherEmail = (newClass.createdByTeacherEmail || currentTeacher?.email || currentTeacher?.gmail || '').trim().toLowerCase();
+
     // Ensure unique ID
     if (!newClass.id) {
       newClass.id = `cls-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
     }
-    if (!newClass.teacherId && currentTeacher?.id) {
-      newClass.teacherId = currentTeacher.id;
+    if (!newClass.teacherId && teacherUid) {
+      newClass.teacherId = teacherUid;
+    }
+    if (!newClass.teacherUid && teacherUid) {
+      newClass.teacherUid = teacherUid;
     }
     if (!newClass.teacherName && currentTeacher?.name) {
       newClass.teacherName = currentTeacher.name;
@@ -344,11 +410,37 @@ export const StorageService = {
       newClass.createdAt = new Date().toISOString();
     }
     newClass.isTeacherCreated = true;
-    if (!newClass.createdByTeacherId && (newClass.teacherId || currentTeacher?.id)) {
-      newClass.createdByTeacherId = newClass.teacherId || currentTeacher?.id || '';
+    if (!newClass.createdByTeacherId && teacherUid) {
+      newClass.createdByTeacherId = teacherUid;
     }
-    if (!newClass.createdByTeacherEmail && (currentTeacher?.email || currentTeacher?.gmail)) {
-      newClass.createdByTeacherEmail = currentTeacher?.email || currentTeacher?.gmail || '';
+    if (!newClass.createdByTeacherEmail && teacherEmail) {
+      newClass.createdByTeacherEmail = teacherEmail;
+    }
+
+    // Deduplication check:
+    // 1. Direct ID match
+    let existingIdx = classes.findIndex(c => c.id === newClass.id);
+
+    // 2. Teacher + Standard + Section match (prevent duplicate classrooms for same teacher)
+    if (existingIdx < 0 && (teacherUid || teacherEmail)) {
+      const cleanStd = (newClass.standard || '').trim().toLowerCase();
+      const cleanSec = (newClass.section || '').trim().toLowerCase();
+      const cleanName = (newClass.className || '').trim().toLowerCase();
+
+      existingIdx = classes.findIndex(c => {
+        const cTeacherId = c.teacherId || c.teacherUid || c.createdByTeacherId || '';
+        const cTeacherEmail = (c.createdByTeacherEmail || '').trim().toLowerCase();
+        const isSameTeacher = (teacherUid && cTeacherId === teacherUid) || (teacherEmail && cTeacherEmail === teacherEmail);
+        if (!isSameTeacher) return false;
+
+        if (cleanStd && cleanSec && c.standard.trim().toLowerCase() === cleanStd && c.section.trim().toLowerCase() === cleanSec) {
+          return true;
+        }
+        if (cleanName && c.className.trim().toLowerCase() === cleanName) {
+          return true;
+        }
+        return false;
+      });
     }
 
     const preparedStudents = (initialStudents || []).map(s => ({
@@ -357,6 +449,27 @@ export const StorageService = {
       teacherId: newClass.teacherId,
       schoolCode: newClass.schoolCode
     }));
+
+    if (existingIdx >= 0) {
+      const existingClass = classes[existingIdx];
+      newClass.id = existingClass.id;
+      const preservedCreatedAt = existingClass.createdAt || newClass.createdAt;
+      classes[existingIdx] = {
+        ...existingClass,
+        ...newClass,
+        id: existingClass.id,
+        createdAt: preservedCreatedAt
+      };
+
+      if (preparedStudents.length > 0) {
+        const studentsForExisting = preparedStudents.map(s => ({ ...s, classId: existingClass.id }));
+        this.saveStudents(studentsForExisting, existingClass.id);
+        classes[existingIdx].classStrength = studentsForExisting.length;
+      }
+      this.saveClassesList(classes);
+      notifyMutation();
+      return classes[existingIdx];
+    }
 
     newClass.classStrength = preparedStudents.length;
     classes.push(newClass);
@@ -415,7 +528,14 @@ export const StorageService = {
     try {
       const activeId = classId || this.getActiveClassId();
       const classes = this.getClassesList();
-      const current = classes.find(c => c.id === activeId);
+      let current = classes.find(c => c.id === activeId);
+      if (!current) {
+        const teacherClasses = this.getClassesByTeacher();
+        if (teacherClasses.length > 0) {
+          current = teacherClasses[0];
+          this.setActiveClassId(current.id);
+        }
+      }
       if (current) {
         return {
           id: current.id,
@@ -1804,6 +1924,7 @@ export const StorageService = {
 
   logout() {
     localStorage.removeItem(STORAGE_KEYS.AUTH_SESSION);
+    localStorage.removeItem(STORAGE_KEYS.ACTIVE_CLASS_ID);
     notifyMutation();
   },
 

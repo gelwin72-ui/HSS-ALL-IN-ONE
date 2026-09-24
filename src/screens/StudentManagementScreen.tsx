@@ -22,7 +22,9 @@ import {
   Check,
   Share2,
   AlertTriangle,
-  FileCode
+  FileCode,
+  Camera,
+  Image as ImageIcon
 } from 'lucide-react';
 import { Student, Gender, AttendanceRecord, Exam, ExamMarksRecord, SchoolProfile, ClassInfo, TeacherInfo } from '../types';
 import { parseStudentsCSV, downloadSampleStudentCSV, exportStudentsToCSV, CSVParseResult } from '../utils/csvHelper';
@@ -30,6 +32,7 @@ import { exportStudentsToSVG, parseStudentsSVG, downloadSVGFile } from '../utils
 import { extractTextFromPDF, parseStudentsPDF } from '../utils/pdfHelper';
 import { calculateStudentAttendanceStats } from '../utils/calculations';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { StudentCameraModal } from '../components/StudentCameraModal';
 
 interface StudentManagementScreenProps {
   students: Student[];
@@ -90,13 +93,20 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
   const [formAddress, setFormAddress] = useState('');
   const [formBloodGroup, setFormBloodGroup] = useState('O+');
   const [formNotes, setFormNotes] = useState('');
+  const [formPhotoUrl, setFormPhotoUrl] = useState<string>('');
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
+
+  // Camera Modal State
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraTargetStudent, setCameraTargetStudent] = useState<Student | null>(null);
+  const [isFormCamera, setIsFormCamera] = useState(false);
 
   // File Import State (PDF / CSV / SVG)
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const svgFileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfFileInputRef = useRef<HTMLInputElement | null>(null);
+  const formPhotoFileInputRef = useRef<HTMLInputElement | null>(null);
   const [importedFileType, setImportedFileType] = useState<'csv' | 'svg' | 'pdf'>('csv');
   const [isPdfLoading, setIsPdfLoading] = useState(false);
   const [parseResult, setParseResult] = useState<CSVParseResult | null>(null);
@@ -119,6 +129,7 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
     setFormAddress('');
     setFormBloodGroup('O+');
     setFormNotes('');
+    setFormPhotoUrl('');
     setFormError(null);
     setEditingStudent(null);
     setActiveTab('add');
@@ -138,8 +149,67 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
     setFormAddress(student.address || '');
     setFormBloodGroup(student.bloodGroup || 'O+');
     setFormNotes(student.notes || '');
+    setFormPhotoUrl(student.photoUrl || student.avatar || '');
     setFormError(null);
     setActiveTab('add');
+  };
+
+  // Quick Camera Launch for a student
+  const handleLaunchCameraForStudent = (student: Student) => {
+    setCameraTargetStudent(student);
+    setIsFormCamera(false);
+    setIsCameraOpen(true);
+  };
+
+  // Form Camera Launch
+  const handleLaunchCameraForForm = () => {
+    setCameraTargetStudent(null);
+    setIsFormCamera(true);
+    setIsCameraOpen(true);
+  };
+
+  // Handle Photo Captured from Camera or Upload
+  const handlePhotoCaptured = (photoDataUrl: string) => {
+    if (isFormCamera) {
+      setFormPhotoUrl(photoDataUrl);
+    } else if (cameraTargetStudent) {
+      const updated: Student = {
+        ...cameraTargetStudent,
+        photoUrl: photoDataUrl
+      };
+      onUpdateStudent(updated);
+      if (selectedStudent && selectedStudent.id === cameraTargetStudent.id) {
+        setSelectedStudent(updated);
+      }
+      setFormSuccess(`Profile photo updated for ${cameraTargetStudent.name}!`);
+      setTimeout(() => setFormSuccess(null), 2500);
+    }
+  };
+
+  // Form Photo Upload from File
+  const handleFormPhotoFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = event => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 400;
+        canvas.height = 400;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const minDim = Math.min(img.width, img.height);
+          const sx = (img.width - minDim) / 2;
+          const sy = (img.height - minDim) / 2;
+          ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, 400, 400);
+          setFormPhotoUrl(canvas.toDataURL('image/jpeg', 0.85));
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
   };
 
   // Submit Add / Edit Form
@@ -178,6 +248,7 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
       address: formAddress.trim(),
       bloodGroup: formBloodGroup,
       notes: formNotes.trim(),
+      photoUrl: formPhotoUrl || undefined,
       createdAt: editingStudent ? editingStudent.createdAt : new Date().toISOString()
     };
 
@@ -555,8 +626,29 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
                               className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-[#2D3139] bg-[#0F1115]"
                             />
                           ) : (
-                            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-700 to-indigo-600 text-white font-extrabold flex items-center justify-center text-sm shadow-md shrink-0">
-                              {student.rollNo}
+                            <div className="relative group/avatar shrink-0">
+                              <div className="w-10 h-10 rounded-xl overflow-hidden bg-gradient-to-tr from-purple-700 to-indigo-600 text-white font-extrabold flex items-center justify-center text-sm shadow-md border border-white/10">
+                                {student.photoUrl || student.avatar ? (
+                                  <img
+                                    src={student.photoUrl || student.avatar}
+                                    alt={student.name}
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <span>{student.rollNo}</span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  handleLaunchCameraForStudent(student);
+                                }}
+                                title="Take / Update Photo with Camera"
+                                className="absolute -bottom-1 -right-1 p-1 rounded-full bg-purple-600 hover:bg-purple-500 text-white shadow-md border border-[#1A1C23] transition opacity-0 group-hover:opacity-100 group-hover/avatar:opacity-100 scale-90 hover:scale-105"
+                              >
+                                <Camera className="w-2.5 h-2.5" />
+                              </button>
                             </div>
                           )}
 
@@ -698,7 +790,69 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
             </div>
           )}
 
-          <form onSubmit={handleSubmitStudentForm} className="space-y-4">
+          <form onSubmit={handleSubmitStudentForm} className="space-y-5">
+            {/* Student Photo Section */}
+            <div className="p-4 rounded-2xl bg-[#0F1115] border border-[#2D3139] flex flex-col sm:flex-row items-center gap-4">
+              <div className="relative group/photo shrink-0">
+                <div className="w-20 h-20 rounded-2xl overflow-hidden bg-[#1A1C23] border-2 border-[#2D3139] flex items-center justify-center text-slate-500 shadow-lg">
+                  {formPhotoUrl ? (
+                    <img
+                      src={formPhotoUrl}
+                      alt="Student Preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <User className="w-9 h-9 text-slate-600" />
+                  )}
+                </div>
+                {formPhotoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setFormPhotoUrl('')}
+                    title="Remove Photo"
+                    className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-rose-600 hover:bg-rose-500 text-white shadow-md border border-[#0F1115] transition"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex-1 text-center sm:text-left space-y-1.5">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center justify-center sm:justify-start gap-1.5">
+                  <Camera className="w-3.5 h-3.5 text-purple-400" /> Student Profile Photo
+                </h4>
+                <p className="text-[11px] text-slate-400">
+                  Use your device camera to take an instant photo or upload an image file for this student record.
+                </p>
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleLaunchCameraForForm}
+                    className="px-3.5 py-1.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs font-bold transition flex items-center gap-1.5 active:scale-95"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{formPhotoUrl ? 'Retake with Camera' : 'Take Photo with Camera'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => formPhotoFileInputRef.current?.click()}
+                    className="px-3.5 py-1.5 rounded-xl bg-[#252830] hover:bg-[#2D3139] text-slate-300 text-xs font-semibold transition flex items-center gap-1.5"
+                  >
+                    <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Upload Image</span>
+                  </button>
+                  <input
+                    type="file"
+                    ref={formPhotoFileInputRef}
+                    accept="image/*"
+                    onChange={handleFormPhotoFileSelect}
+                    className="hidden"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
@@ -1138,13 +1292,31 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#2D3139] bg-[#0F1115]">
               <div className="flex items-center gap-3.5">
-                <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-purple-600 to-indigo-600 text-white font-extrabold flex items-center justify-center text-lg shadow-lg">
-                  {selectedStudent.rollNo}
+                <div className="relative group/modalphoto shrink-0">
+                  <div className="w-12 h-12 rounded-2xl overflow-hidden bg-gradient-to-tr from-purple-600 to-indigo-600 text-white font-extrabold flex items-center justify-center text-lg shadow-lg border border-white/10">
+                    {selectedStudent.photoUrl || selectedStudent.avatar ? (
+                      <img
+                        src={selectedStudent.photoUrl || selectedStudent.avatar}
+                        alt={selectedStudent.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span>{selectedStudent.rollNo}</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleLaunchCameraForStudent(selectedStudent)}
+                    title="Change Photo with Camera"
+                    className="absolute -bottom-1 -right-1 p-1 rounded-full bg-purple-600 hover:bg-purple-500 text-white shadow-md border border-[#0F1115] transition"
+                  >
+                    <Camera className="w-3 h-3" />
+                  </button>
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white">{selectedStudent.name}</h3>
                   <p className="text-xs text-slate-400 font-mono">
-                    Admission No: {selectedStudent.admissionNo} • {classNameStr}
+                    Roll #{selectedStudent.rollNo} • Admission No: {selectedStudent.admissionNo} • {classNameStr}
                   </p>
                 </div>
               </div>
@@ -1331,6 +1503,17 @@ export const StudentManagementScreen: React.FC<StudentManagementScreenProps> = (
         isDestructive={true}
         onConfirm={handleConfirmBulkDelete}
         onCancel={() => setBulkDeleteConfirm(false)}
+      />
+      {/* Student Camera Capture Modal */}
+      <StudentCameraModal
+        isOpen={isCameraOpen}
+        studentName={isFormCamera ? formName || 'New Student' : cameraTargetStudent?.name}
+        onCapture={handlePhotoCaptured}
+        onClose={() => {
+          setIsCameraOpen(false);
+          setCameraTargetStudent(null);
+          setIsFormCamera(false);
+        }}
       />
     </div>
   );

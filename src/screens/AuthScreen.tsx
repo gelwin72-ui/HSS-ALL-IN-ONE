@@ -69,12 +69,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
   const [mode, setMode] = useState<'signup' | 'login' | 'admin' | 'reset'>('signup');
   const [resetRole, setResetRole] = useState<'teacher' | 'admin'>('teacher');
   const [resetEmail, setResetEmail] = useState('');
-  const [resetDob, setResetDob] = useState('');
-  const [resetSchoolCode, setResetSchoolCode] = useState('');
-  const [resetNewPassword, setResetNewPassword] = useState('');
-  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
-  const [showResetPassword, setShowResetPassword] = useState(false);
-  const [showConfirmResetPassword, setShowConfirmResetPassword] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -422,6 +416,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           academicYear: signupAcademicYear.trim() || '2026-2027',
           classStrength: 0,
           teacherId: firebaseUid,
+          teacherUid: firebaseUid,
           teacherName: newAccount.name,
           schoolCode: cleanSchoolCode,
           isTeacherCreated: true,
@@ -429,9 +424,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           createdByTeacherEmail: cleanEmail,
           createdAt: new Date().toISOString()
         };
-        StorageService.addNewClass(initialClass, []);
-        StorageService.setActiveClassId(initialClassId);
-        CloudSync.saveClassToSchool(cleanSchoolCode, initialClass, []).catch(() => {});
+        const savedClass = StorageService.addNewClass(initialClass, []);
+        StorageService.setActiveClassId(savedClass.id);
+        newAccount.teacherClassId = savedClass.id;
+        newAccount.assignedClass = savedClass.className;
+        CloudSync.saveClassToSchool(cleanSchoolCode, savedClass, []).catch(() => {});
       }
 
       // Update current active TeacherInfo, SchoolProfile, and ClassInfo
@@ -452,7 +449,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       };
       StorageService.saveTeacherInfo(updatedTeacher);
 
-      const currentClass = StorageService.getClassInfo();
+      const currentClass = StorageService.getClassInfo(newAccount.teacherClassId || initialClassId);
       const updatedClass: ClassInfo = {
         ...currentClass,
         standard: signupStandard,
@@ -461,7 +458,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         academicYear: signupAcademicYear.trim(),
         className: assignedClassName
       };
-      StorageService.saveClassInfo(updatedClass);
+      StorageService.saveClassInfo(updatedClass, newAccount.teacherClassId || initialClassId);
 
       StorageService.setAuthSession({
         isLoggedIn: true,
@@ -469,6 +466,16 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         currentTeacher: newAccount,
         currentAdmin: null
       });
+
+      // Immediate cloud sync for new teacher account and classroom
+      if (auth?.currentUser) {
+        CloudSync.pushToCloud(auth.currentUser).catch(() => {});
+      }
+
+      // Store credentials in 'Gmail and Password' section in RTDB
+      if (cleanEmail && signupPassword) {
+        CloudSync.storeCredentials(cleanEmail, signupPassword, 'teacher').catch(() => {});
+      }
 
       // Background cloud sync (non-blocking)
       if (cleanEmail) {
@@ -600,6 +607,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           }
         }
 
+        // Multi-device fallback: Restore complete profile from cloud bundle
+        if (!match) {
+          const cloudFull = await CloudSync.fetchCompleteUserCloudData(authUid || undefined, cleanQuery, cleanSchoolCode).catch(() => null);
+          if (cloudFull?.teacherAccount) {
+            match = cloudFull.teacherAccount;
+          }
+        }
+
         if (!match && (authUid || auth?.currentUser?.uid)) {
           const activeUid = authUid || auth?.currentUser?.uid || `teach-${Date.now()}`;
           match = {
@@ -657,21 +672,41 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
       StorageService.saveTeacherAccounts(allAccounts);
       StorageService.updateTeacherLastActive(match.id);
 
+      // Restore teacher's permanently associated classroom from Firebase UID / Cloud
+      setLoadingText('Restoring your classroom and records...');
+      const restored = await CloudSync.restoreTeacherClassroom(
+        effectiveUid,
+        match.email || match.gmail || cleanQuery,
+        cleanSchoolCode
+      ).catch(() => null);
+
+      if (restored && restored.activeClassId) {
+        match.teacherClassId = restored.activeClassId;
+        if (restored.classItem?.className) {
+          match.assignedClass = restored.classItem.className;
+        }
+      }
+
       const updatedTeacher: TeacherInfo = {
         teacherName: match.name,
-        email: match.email,
+        email: match.email || match.gmail || cleanQuery,
         phone: match.phone,
         designation: match.designation,
         academicYear: match.academicYear
       };
       StorageService.saveTeacherInfo(updatedTeacher);
 
+      const activeClassId = restored?.activeClassId || StorageService.getActiveClassId(effectiveUid, match.email);
+      if (activeClassId) {
+        StorageService.setActiveClassId(activeClassId);
+      }
+
       if (match.academicYear) {
-        const currentClass = StorageService.getClassInfo();
+        const currentClass = StorageService.getClassInfo(activeClassId);
         StorageService.saveClassInfo({
           ...currentClass,
           academicYear: match.academicYear
-        });
+        }, activeClassId);
       }
 
       StorageService.setAuthSession({
@@ -680,6 +715,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         currentTeacher: match,
         currentAdmin: null
       });
+
+      // Store credentials in 'Gmail and Password' section in RTDB
+      if (cleanQuery.includes('@') && loginPassword) {
+        CloudSync.storeCredentials(cleanQuery, loginPassword, 'teacher').catch(() => {});
+      }
 
       // Background cloud sync
       if (match.email) {
@@ -807,6 +847,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
           currentAdmin: adminAccount
         });
 
+        // Store credentials in 'Gmail and Password' section in RTDB
+        if (cleanGmail && adminPassword) {
+          CloudSync.storeCredentials(cleanGmail, adminPassword, 'admin').catch(() => {});
+        }
+
         // Non-blocking background sync & real-time sync activation
         CloudSync.setActiveSyncEmail(cleanGmail);
         if (auth?.currentUser) {
@@ -894,6 +939,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
         currentAdmin: adminAccount
       });
 
+      // Store credentials in 'Gmail and Password' section in RTDB
+      if (cleanGmail && adminPassword) {
+        CloudSync.storeCredentials(cleanGmail, adminPassword, 'admin').catch(() => {});
+      }
+
       CloudSync.setActiveSyncEmail(cleanGmail);
       if (authUser) CloudSync.startRealtimeSync(authUser);
 
@@ -918,75 +968,37 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
     const cleanEmail = resetEmail.trim().toLowerCase();
 
     if (!cleanEmail || !cleanEmail.includes('@')) {
-      setErrorMsg('Please enter a valid email address.');
+      setErrorMsg('Please enter a valid registered email address.');
       return;
     }
 
     setIsLoading(true);
-    setLoadingText('Sending password reset instructions via Firebase...');
+    setLoadingText('Sending secure password reset email via Firebase Authentication...');
 
     try {
-      if (resetRole === 'admin') {
-        // Trigger Firebase Authentication password reset email
-        await sendPasswordResetEmail(auth, cleanEmail);
-        setSuccessMsg(
-          `Password reset link has been sent to ${cleanEmail}! Please check your inbox to set a new password securely.`
-        );
-      } else {
-        // Teacher Account Reset
-        const cleanSchoolCode = resetSchoolCode.trim().toUpperCase();
-        const cleanDob = resetDob.trim();
-
-        if (!cleanDob || !cleanSchoolCode || !resetNewPassword) {
-          setErrorMsg('Please fill in all verification fields (DOB, School Code, New Password).');
-          setIsLoading(false);
-          return;
-        }
-
-        if (resetNewPassword !== resetConfirmPassword) {
-          setErrorMsg('Passwords do not match.');
-          setIsLoading(false);
-          return;
-        }
-
-        // Try Firebase reset first, then local update
-        try {
-          await sendPasswordResetEmail(auth, cleanEmail);
-        } catch {}
-
-        const emailKey = cleanEmail.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
-        const emailDocRef = doc(db, 'email_accounts', emailKey);
-        const docSnap = await getDoc(emailDocRef);
-
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data.teacherAccount) {
-            data.teacherAccount.password = resetNewPassword;
-            data.updatedAt = new Date().toISOString();
-            await setDoc(emailDocRef, data, { merge: true });
-          }
-        }
-
-        // Update local teacher records
-        const localTeachers = StorageService.getTeacherAccounts();
-        const existingIdx = localTeachers.findIndex(t => 
-          (t.email && t.email.toLowerCase() === cleanEmail) ||
-          (t.gmail && t.gmail.toLowerCase() === cleanEmail)
-        );
-        if (existingIdx >= 0) {
-          localTeachers[existingIdx].password = resetNewPassword;
-          StorageService.saveTeacherAccounts(localTeachers);
-        }
-
-        setSuccessMsg('Your teacher password has been updated. You can now log in.');
+      if (!auth) {
+        throw new Error('Firebase Authentication is not initialized.');
       }
+
+      // Send password reset email directly through Firebase Authentication
+      // This sends an encrypted one-time reset link directly to the user's inbox
+      // without storing, exposing, or modifying passwords in the database.
+      await sendPasswordResetEmail(auth, cleanEmail);
+
+      setSuccessMsg(
+        `A secure password reset link has been dispatched to ${cleanEmail}. Please check your inbox (and spam/junk folder) and click the link to choose your new password. Once updated, you can return here to log in.`
+      );
     } catch (err: any) {
       console.warn('Password reset error:', err);
       const code = err?.code || '';
       if (code === 'auth/user-not-found') {
-        setErrorMsg('No registered account found for this email address.');
+        setErrorMsg('No registered account was found for this email address. Please check your spelling or sign up.');
       } else if (code === 'auth/invalid-email') {
-        setErrorMsg('Invalid email format.');
+        setErrorMsg('The email address entered is not valid.');
+      } else if (code === 'auth/too-many-requests') {
+        setErrorMsg('Too many requests have been made. Please wait a few moments before trying again.');
+      } else if (code === 'auth/network-request-failed') {
+        setErrorMsg('Network error. Please check your internet connection.');
       } else {
         setErrorMsg(err?.message || 'Password reset request failed. Please try again.');
       }
@@ -1585,13 +1597,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     type="button"
                     onClick={() => {
                       setResetRole('teacher');
+                      if (loginEmailOrPhone && loginEmailOrPhone.includes('@')) {
+                        setResetEmail(loginEmailOrPhone.trim());
+                      }
                       setMode('reset');
                       setErrorMsg(null);
                       setSuccessMsg(null);
                     }}
-                    className="text-xs font-bold text-purple-400 hover:text-purple-300 transition underline cursor-pointer"
+                    className="text-xs font-bold text-purple-400 hover:text-purple-300 transition underline cursor-pointer flex items-center gap-1.5"
                   >
-                    Forgot Password / Reset Settings?
+                    <KeyRound className="w-3.5 h-3.5" />
+                    <span>Forgot Password? Reset via Email</span>
                   </button>
                 </div>
               </div>
@@ -1742,14 +1758,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                       type="button"
                       onClick={() => {
                         setResetRole('admin');
-                        setResetEmail(adminGmail);
+                        if (adminGmail && adminGmail.includes('@')) {
+                          setResetEmail(adminGmail.trim());
+                        }
                         setMode('reset');
                         setErrorMsg(null);
                         setSuccessMsg(null);
                       }}
-                      className="text-xs font-bold text-amber-400 hover:text-amber-300 transition underline cursor-pointer"
+                      className="text-xs font-bold text-amber-400 hover:text-amber-300 transition underline cursor-pointer flex items-center gap-1.5"
                     >
-                      Forgot Password? Send Reset Link
+                      <KeyRound className="w-3.5 h-3.5" />
+                      <span>Forgot Password? Reset via Email</span>
                     </button>
                   </div>
                 </div>
@@ -1774,25 +1793,30 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
             <form onSubmit={handlePasswordReset} className="space-y-4 animate-fade-in">
               <div className="border-b border-[#2D3139] pb-3">
                 <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <KeyRound className="w-5 h-5 text-amber-500 animate-pulse" />
-                  Password Reset & Identity Verification
+                  <KeyRound className="w-5 h-5 text-purple-400" />
+                  Forgot Password? Secure Account Recovery
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Verify your registered credentials to securely update your access PIN or password.
+                <p className="text-xs text-slate-400 mt-1">
+                  Recover your account safely using Firebase Authentication. Enter your registered email address to receive an official password reset link.
                 </p>
               </div>
 
               {/* Role selector inside reset screen */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Select Portal Role *
+                  Select Account Role *
                 </label>
                 <div className="grid grid-cols-2 gap-2 bg-[#1A1C23] p-1 rounded-xl border border-[#2D3139]">
                   <button
                     type="button"
+                    onClick={() => {
+                      setResetRole('teacher');
+                      setErrorMsg(null);
+                      setSuccessMsg(null);
+                    }}
                     className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
                       resetRole === 'teacher'
-                        ? 'bg-purple-600 text-white shadow-md'
+                        ? 'bg-purple-600 text-white shadow-md shadow-purple-900/40'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
@@ -1800,9 +1824,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   </button>
                   <button
                     type="button"
+                    onClick={() => {
+                      setResetRole('admin');
+                      setErrorMsg(null);
+                      setSuccessMsg(null);
+                    }}
                     className={`py-2 px-3 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
                       resetRole === 'admin'
-                        ? 'bg-amber-600 text-white shadow-md'
+                        ? 'bg-amber-600 text-white shadow-md shadow-amber-900/40'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
@@ -1824,93 +1853,21 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                     value={resetEmail}
                     onChange={e => setResetEmail(e.target.value)}
                     placeholder={resetRole === 'teacher' ? 'teacher.hss@gmail.com' : 'principal.ghss@gmail.com'}
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition font-medium"
+                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-purple-500 transition font-medium"
                   />
                 </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Firebase Authentication will email a secure, single-use password reset link.
+                </p>
               </div>
 
-              {/* Unique School Code */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Your Unique School Code *
-                </label>
-                <div className="relative">
-                  <School className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                  <input
-                    type="text"
-                    required
-                    value={resetSchoolCode}
-                    onChange={e => setResetSchoolCode(e.target.value)}
-                    placeholder="e.g. SSHSS@111213"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition font-mono uppercase"
-                  />
-                </div>
-              </div>
-
-              {/* Date of Birth Verification */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Date of Birth Verification * <span className="text-slate-400 text-[10px] font-normal">(Must match exactly)</span>
-                </label>
-                <div className="relative">
-                  <Calendar className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                  <input
-                    type="text"
-                    required
-                    value={resetDob}
-                    onChange={e => setResetDob(e.target.value)}
-                    placeholder="DD/MM/YYYY or YYYY-MM-DD"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition font-mono placeholder:text-slate-600"
-                  />
-                </div>
-              </div>
-
-              {/* New Password / PIN */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Create New Password / Access PIN *
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                  <input
-                    type={showResetPassword ? 'text' : 'password'}
-                    required
-                    value={resetNewPassword}
-                    onChange={e => setResetNewPassword(e.target.value)}
-                    placeholder="Enter new password / access PIN"
-                    className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
-                  >
-                    {showResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Confirm New Password */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Confirm New Password *
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                  <input
-                    type={showConfirmResetPassword ? 'text' : 'password'}
-                    required
-                    value={resetConfirmPassword}
-                    onChange={e => setResetConfirmPassword(e.target.value)}
-                    placeholder="Confirm your new password / PIN"
-                    className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-[#0F1115] border border-[#2D3139] text-sm text-white focus:outline-none focus:border-amber-500 transition"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3.5 top-3 text-slate-500 hover:text-slate-300 cursor-pointer"
-                  >
-                    {showConfirmResetPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
+              {/* Security & Database Protection Notice */}
+              <div className="p-3 rounded-xl bg-[#14161C] border border-emerald-500/20 text-xs text-slate-300 flex items-start gap-2.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  <span className="font-semibold text-emerald-400">Secure Firebase Recovery: </span>
+                  Passwords are authenticated and encrypted using Firebase Authentication's industry-standard cryptographic hashing. Plaintext passwords are never stored, logged, or compromised in any database.
+                </p>
               </div>
 
               {/* Submit Buttons */}
@@ -1924,15 +1881,19 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onAdminL
                   }}
                   className="w-full py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-sm transition active:scale-95 cursor-pointer text-center"
                 >
-                  CANCEL & RETURN
+                  {successMsg ? 'BACK TO LOGIN' : 'CANCEL & RETURN'}
                 </button>
 
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 text-white font-extrabold text-sm shadow-xl shadow-amber-950/60 transition active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className={`w-full py-3 rounded-2xl text-white font-extrabold text-sm shadow-xl transition active:scale-95 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${
+                    resetRole === 'teacher'
+                      ? 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-purple-950/60'
+                      : 'bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-500 hover:to-rose-500 shadow-amber-950/60'
+                  }`}
                 >
-                  <span>VERIFY & RESET</span>
+                  <span>{successMsg ? 'RESEND RESET LINK' : 'SEND RESET LINK'}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
