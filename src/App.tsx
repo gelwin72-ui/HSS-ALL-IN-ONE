@@ -846,7 +846,7 @@ export function App() {
         schoolName={school.schoolName || "St.Sebastian's Higher Secondary School"}
         schoolCode={school.schoolCode}
         principalName={currentAdmin?.designation || school.designation || school.principalName || 'Principal'}
-        classNameStr={classInfo.className || 'Class 12 Science A'}
+        classNameStr={classInfo.className || classesList.find(c => c.id === activeClassId)?.className || StorageService.getAuthSession().currentTeacher?.assignedClass || (classesList.length > 0 ? classesList[0].className : 'Classroom')}
         classesList={classesList}
         activeClassId={activeClassId}
         teacher={teacher}

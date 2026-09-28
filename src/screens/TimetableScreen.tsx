@@ -96,7 +96,7 @@ export const TimetableScreen: React.FC<TimetableScreenProps> = ({
     endTime: '10:15 AM',
     subject: 'Physics',
     subjectCode: 'PHY',
-    className: classInfo.className || 'Class 12 Science A',
+    className: classInfo.className || (classesList.find(c => c.id === activeClassId)?.className) || '',
     roomNumber: 'Room 101',
     type: 'lecture',
     notes: ''
@@ -218,7 +218,7 @@ export const TimetableScreen: React.FC<TimetableScreenProps> = ({
       endTime: timing.endTime,
       subject: teacher.designation?.includes('Physics') ? 'Physics' : teacher.designation?.includes('Computer') ? 'Computer Science' : 'General Higher Secondary',
       subjectCode: 'GEN',
-      className: classInfo.className || 'Class 12 Science A',
+      className: classInfo.className || (classesList.find(c => c.id === activeClassId)?.className) || '',
       roomNumber: 'Room 101',
       type: 'lecture',
       notes: ''
@@ -295,7 +295,7 @@ export const TimetableScreen: React.FC<TimetableScreenProps> = ({
       schoolName: school.schoolName,
       schoolCode: schoolCode,
       designation: teacher.designation || 'Class Teacher',
-      assignedClass: classInfo.className || 'Class 12 Science A',
+      assignedClass: classInfo.className || (classesList.find(c => c.id === activeClassId)?.className) || '',
       createdAt: new Date().toISOString()
     };
 
