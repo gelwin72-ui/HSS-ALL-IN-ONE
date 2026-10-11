@@ -16,5 +16,9 @@
     <string name="pdf_open_external">Open in PDF App</string>
     <string name="permission_storage_required">Storage permission is required to save downloads.</string>
     <string name="permission_camera_required">Camera permission is required to take photos for upload.</string>
+    <string name="permission_notification_required">Notification permission is required to receive real-time school notices and exam updates.</string>
+    <string name="notification_channel_notices">School Notices &amp; Directives</string>
+    <string name="notification_channel_exams">Exam Schedules &amp; Results</string>
+    <string name="notification_channel_holidays">Holidays &amp; Calendar</string>
     <string name="app_not_found">No application available to open this link.</string>
 </resources>

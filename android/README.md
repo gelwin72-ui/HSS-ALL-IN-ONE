@@ -32,6 +32,14 @@ The APK is engineered as a high-performance, native web-container connected dire
   └─────────────────────────────────────────────────────────────┘
 ```
 
+### 🔔 Firebase Cloud Messaging (FCM) Integration
+The Android container includes native Firebase Cloud Messaging:
+- ✅ **Native Push Notifications**: Delivers push notices even when the app is completely closed or device is locked.
+- ✅ **Notification Channels**: Segregates alerts into Notices, Exam Schedules, Holidays, and Messages.
+- ✅ **Lockscreen Privacy**: Protects private messages and directives on locked screens.
+- ✅ **Deep Link Navigation**: Tapping a notification opens the exact target screen inside the WebView.
+- ✅ **Bridge to Web App**: Shares native FCM token with JavaScript via `window.AndroidApp.getFcmToken()`.
+
 ### ⚡ What Updates Automatically (NO APK Rebuild Needed)
 Whenever you push changes to your GitHub Pages repository:
 - ✅ **All UI changes, pages, screens, and components** update immediately for users upon opening or refreshing the app.
@@ -43,7 +51,7 @@ Whenever you push changes to your GitHub Pages repository:
 You only need to rebuild a new APK / AAB if you want to change:
 - Android App Name or Package ID (`com.hss.allinone`)
 - App Launcher Icon or Android Splash Screen graphics
-- Android Manifest permissions (e.g., adding Bluetooth or NFC)
+- Google Services configuration (`google-services.json`)
 - Hardcoded Target URL in `AppConfig.java`
 
 ---

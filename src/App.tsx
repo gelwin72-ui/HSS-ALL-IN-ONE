@@ -28,7 +28,7 @@ import { InstallPromptBanner } from './components/InstallPromptBanner';
 import { auth, onAuthStateChanged, signOut } from './utils/firebase';
 import { CloudSync } from './utils/cloudSync';
 import { ThemeManager } from './utils/themeHelper';
-import { requestAndSaveFCMToken, removeFCMToken } from './utils/fcm';
+import { requestAndSaveFCMToken, removeFCMToken, sendSchoolNotification } from './utils/fcm';
 import { setOneSignalUser, logoutOneSignalUser } from './utils/onesignal';
 
 // Screens
@@ -113,6 +113,20 @@ export function App() {
     setExamMarksMap(StorageService.getExamMarksMap(cid));
     setReminders(StorageService.getReminders());
   };
+
+  // Listen for foreground FCM push events and display instant in-app toasts
+  useEffect(() => {
+    const handleForegroundPush = (e: any) => {
+      const detail = e.detail;
+      if (detail && detail.title) {
+        showToast(`${detail.title}: ${detail.body || ''}`, 'info');
+      }
+    };
+    window.addEventListener('hss-fcm-foreground-message', handleForegroundPush);
+    return () => {
+      window.removeEventListener('hss-fcm-foreground-message', handleForegroundPush);
+    };
+  }, []);
 
   // Initialize Theme and listen to Auth & Email state for automatic seamless cross-device cloud sync
   useEffect(() => {
@@ -692,6 +706,15 @@ export function App() {
       assignedClass: classInfo.className,
       activityType: 'marks_entered',
       description: `Saved examination schedule/details for "${exam.name}" (Max: ${totalMaxMarks}).`
+    }).catch(() => {});
+
+    // Dispatch real-time exam notification via FCM
+    sendSchoolNotification({
+      schoolCode,
+      title: `📝 Exam Schedule: ${exam.name}`,
+      body: `Examination schedule and syllabus published for Class ${classInfo.className}.`,
+      category: 'exams',
+      targetAudience: 'Teachers'
     }).catch(() => {});
 
     showToast(`Exam "${exam.name}" saved!`, 'success');

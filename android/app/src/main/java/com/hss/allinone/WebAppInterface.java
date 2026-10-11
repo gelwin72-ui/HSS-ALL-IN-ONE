@@ -3,6 +3,7 @@ package com.hss.allinone;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.os.VibrationEffect;
@@ -10,9 +11,12 @@ import android.os.Vibrator;
 import android.webkit.JavascriptInterface;
 import android.widget.Toast;
 
+import androidx.core.app.NotificationManagerCompat;
+
 /**
  * JavaScript interface exposed to the WebView under the name "AndroidApp".
- * Allows the website to trigger native Android actions safely.
+ * Allows the website to trigger native Android actions, query FCM tokens,
+ * and request notification permissions safely.
  */
 public class WebAppInterface {
 
@@ -103,6 +107,37 @@ public class WebAppInterface {
     @JavascriptInterface
     public boolean isNativeApp() {
         return true;
+    }
+
+    /**
+     * Returns the native Firebase Cloud Messaging (FCM) token registered on this Android device.
+     */
+    @JavascriptInterface
+    public String getFcmToken() {
+        if (activity == null) return null;
+        SharedPreferences prefs = activity.getSharedPreferences(HSSFirebaseMessagingService.PREFS_NAME, Context.MODE_PRIVATE);
+        return prefs.getString(HSSFirebaseMessagingService.PREF_FCM_TOKEN, null);
+    }
+
+    /**
+     * Checks if notification permissions are enabled on this Android device.
+     */
+    @JavascriptInterface
+    public boolean areNotificationsEnabled() {
+        if (activity == null) return false;
+        return NotificationManagerCompat.from(activity).areNotificationsEnabled();
+    }
+
+    /**
+     * Triggers the native Android notification permission dialog (for Android 13+ / API 33+).
+     */
+    @JavascriptInterface
+    public void requestNotificationPermission() {
+        if (activity instanceof MainActivity) {
+            activity.runOnUiThread(() -> {
+                ((MainActivity) activity).requestNotificationPermissionExplicit();
+            });
+        }
     }
 
     /**

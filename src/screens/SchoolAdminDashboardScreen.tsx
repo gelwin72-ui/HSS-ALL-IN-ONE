@@ -85,6 +85,7 @@ import {
   generateSchoolAdminTeachersPDF,
   shareOrDownloadPDF
 } from '../utils/pdfGenerator';
+import { sendSchoolNotification } from '../utils/fcm';
 
 interface SchoolAdminDashboardScreenProps {
   admin: SchoolAdminAccount;
@@ -904,15 +905,23 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     try {
       const docRef = doc(db, 'broadcasts', newBroadcast.id);
       await setDoc(docRef, newBroadcast);
-      fetch('/api/send-fcm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          schoolCode: newBroadcast.schoolCode,
-          title: newBroadcast.title,
-          body: newBroadcast.message,
-          targetAudience: newBroadcast.targetAudience
-        })
+
+      const catMap: Record<string, any> = {
+        holiday: 'holidays',
+        exam: 'exams',
+        meeting: 'notices',
+        administrative: 'notices',
+        academic: 'notices',
+        general: 'notices'
+      };
+      const fcmCategory = catMap[newBroadcast.category] || 'notices';
+
+      sendSchoolNotification({
+        schoolCode: newBroadcast.schoolCode,
+        title: newBroadcast.title,
+        body: newBroadcast.message,
+        category: fcmCategory,
+        targetAudience: newBroadcast.targetAudience
       }).catch(() => {});
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `broadcasts/${newBroadcast.id}`);
@@ -953,6 +962,14 @@ export const SchoolAdminDashboardScreen: React.FC<SchoolAdminDashboardScreenProp
     try {
       const docRef = doc(db, 'broadcasts', bdayBroadcast.id);
       await setDoc(docRef, bdayBroadcast);
+
+      sendSchoolNotification({
+        schoolCode: admin.schoolCode,
+        title: `🎂 Birthday Wishes to ${teacher.name}!`,
+        body: greetingMessage,
+        category: 'messages',
+        targetAudience: 'All Teachers'
+      }).catch(() => {});
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `broadcasts/${bdayBroadcast.id}`);
     }

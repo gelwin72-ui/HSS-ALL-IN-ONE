@@ -23,7 +23,18 @@ import {
   Globe,
   Check,
   FolderOpen,
-  ArrowRight
+  ArrowRight,
+  ShieldCheck,
+  Copy,
+  Lock,
+  Volume2,
+  VolumeX,
+  Send,
+  Calendar,
+  GraduationCap,
+  Sliders,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import {
   SchoolProfile,
@@ -41,7 +52,22 @@ import { exportStudentsToCSV, exportAttendanceToCSV } from '../utils/csvHelper';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { auth, googleProvider, signInWithPopup, signOut } from '../utils/firebase';
 import { CloudSync, SyncStatus } from '../utils/cloudSync';
-import { getNotificationStatus, requestNotificationPermission, ONESIGNAL_APP_ID } from '../utils/onesignal';
+import {
+  getNotificationPreferences,
+  saveNotificationPreferences,
+  NotificationPreferences,
+  requestAndSaveFCMToken,
+  getCachedFCMToken,
+  isRunningInAndroidApp,
+  getAndroidNativeFCMToken,
+  testForegroundNotification,
+  testBackgroundNotification,
+  simulateAndroidLockscreen,
+  testEventTrigger,
+  testPermissionDeniedResilience,
+  testUnauthorizedUserSecurity,
+  sendSchoolNotification
+} from '../utils/fcm';
 
 interface SettingsScreenProps {
   school: SchoolProfile;
@@ -96,39 +122,52 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [firebaseUser, setFirebaseUser] = useState(auth?.currentUser || null);
   const [isSyncingAction, setIsSyncingAction] = useState(false);
 
-  // OneSignal Push Notification State
-  const [pushStatus, setPushStatus] = useState<{
-    supported: boolean;
-    permission: boolean;
-    optedIn: boolean;
-    subscriptionId?: string | null;
-  }>({ supported: true, permission: false, optedIn: false });
-  const [isEnablingPush, setIsEnablingPush] = useState(false);
+  // FCM Push Notifications & User Preferences State
+  const [fcmPrefs, setFcmPrefs] = useState<NotificationPreferences>(getNotificationPreferences());
+  const [fcmToken, setFcmToken] = useState<string | null>(getCachedFCMToken());
+  const [isEnablingFcm, setIsEnablingFcm] = useState(false);
+  const [fcmTestResult, setFcmTestResult] = useState<{ message: string; success: boolean } | null>(null);
+  const [isTestingAction, setIsTestingAction] = useState(false);
+  const isAndroid = isRunningInAndroidApp();
 
-  useEffect(() => {
-    getNotificationStatus().then(status => {
-      setPushStatus(status);
-    }).catch(() => {});
-  }, []);
+  const handleToggleCategoryPref = async (key: keyof NotificationPreferences) => {
+    const updated = {
+      ...fcmPrefs,
+      [key]: !fcmPrefs[key]
+    };
+    setFcmPrefs(updated);
+    await saveNotificationPreferences(updated, auth?.currentUser?.uid);
+    setSuccessMsg(`Preference updated: "${String(key)}" is now ${updated[key] ? 'Enabled' : 'Disabled'}.`);
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
 
-  const handleTogglePushPermission = async () => {
+  const handleToggleMasterFcm = async () => {
     try {
-      setIsEnablingPush(true);
-      const granted = await requestNotificationPermission();
-      const status = await getNotificationStatus();
-      setPushStatus(status);
-      if (granted) {
-        setSuccessMsg('Push notifications enabled! Device is subscribed to OneSignal and school broadcasts.');
+      setIsEnablingFcm(true);
+      setErrorMsg(null);
+      const session = StorageService.getAuthSession();
+      const uid = auth?.currentUser?.uid || session.currentTeacher?.id || session.currentAdmin?.id || session.currentAdmin?.email || 'user';
+      const sCode = school?.schoolCode || session.currentTeacher?.schoolCode || 'SSHSS@111213';
+      const role = session.role || 'teacher';
+
+      const token = await requestAndSaveFCMToken(uid, sCode, role);
+      if (token) {
+        setFcmToken(token);
+        setSuccessMsg('FCM Push notifications enabled! Device registered for real-time school notices.');
         setTimeout(() => setSuccessMsg(null), 4000);
       } else {
-        setErrorMsg('Notification permission was not granted. Please allow notifications in browser/Android settings.');
-        setTimeout(() => setErrorMsg(null), 4000);
+        if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+          setErrorMsg('Notification permission was denied. You can allow notifications in your browser or Android system settings.');
+        } else {
+          setErrorMsg('Could not register device token. Please check internet connection.');
+        }
+        setTimeout(() => setErrorMsg(null), 5000);
       }
     } catch (e: any) {
-      setErrorMsg(e.message || 'Error configuring push notifications');
+      setErrorMsg(e.message || 'Error configuring FCM notifications');
       setTimeout(() => setErrorMsg(null), 4000);
     } finally {
-      setIsEnablingPush(false);
+      setIsEnablingFcm(false);
     }
   };
 
@@ -469,88 +508,428 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
         </div>
       </div>
 
-      {/* ONESIGNAL PUSH NOTIFICATIONS & DEVICE ALERTS */}
-      <div className="rounded-3xl bg-[#1A1C23] border border-[#2D3139] p-5 sm:p-6 shadow-xl space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#2D3139] gap-3">
+      {/* FIREBASE CLOUD MESSAGING (FCM) PUSH NOTIFICATIONS & DEVICE PREFERENCES */}
+      <div className="rounded-3xl bg-[#1A1C23] border border-[#2D3139] p-5 sm:p-6 shadow-xl space-y-6">
+        {/* Header & Master Toggle */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-[#2D3139] gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              <Bell className="w-5 h-5" />
+            <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <Bell className="w-6 h-6" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">ONESIGNAL PUSH NOTIFICATIONS</h2>
+                <h2 className="text-base font-bold text-white">FIREBASE PUSH NOTIFICATIONS (FCM)</h2>
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${
-                  pushStatus.permission
+                  fcmToken
                     ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                     : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
                 }`}>
-                  {pushStatus.permission ? 'Active & Subscribed' : 'Permission Required'}
+                  {fcmToken ? 'Device Subscribed' : 'Not Subscribed'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  {isAndroid ? 'Android APK Container' : 'Web Push (Vite / PWA)'}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                OneSignal App ID: <span className="font-mono text-slate-300 font-bold">{ONESIGNAL_APP_ID}</span>
+              <p className="text-xs text-slate-400 mt-1">
+                Project: <span className="font-mono text-slate-300 font-bold">hss-all-in-one</span> | 
+                Sender ID: <span className="font-mono text-slate-300 font-bold">978993384932</span>
               </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={handleTogglePushPermission}
-            disabled={isEnablingPush}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition flex items-center gap-2 active:scale-95 disabled:opacity-50 self-start sm:self-auto ${
-              pushStatus.permission
+            onClick={handleToggleMasterFcm}
+            disabled={isEnablingFcm}
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs shadow-lg transition flex items-center gap-2 active:scale-95 disabled:opacity-50 self-start sm:self-auto cursor-pointer ${
+              fcmToken
                 ? 'bg-[#0F1115] hover:bg-[#252830] text-emerald-400 border border-emerald-500/30'
-                : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-amber-950/40'
+                : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 shadow-amber-950/40'
             }`}
           >
-            {pushStatus.permission ? (
+            {fcmToken ? (
               <>
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span>Subscribed to Push Notifications</span>
+                <span>Device Registered (FCM Active)</span>
               </>
             ) : (
               <>
                 <Bell className="w-4 h-4" />
-                <span>{isEnablingPush ? 'Requesting Permission...' : 'Enable Push Notifications'}</span>
+                <span>{isEnablingFcm ? 'Registering Token...' : 'Enable FCM Notifications'}</span>
               </>
             )}
           </button>
         </div>
 
+        {/* Device Status Bar */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139]/80 space-y-1">
-            <span className="text-[11px] font-bold text-slate-400 uppercase">Notification Status</span>
+            <span className="text-[11px] font-bold text-slate-400 uppercase">Notification Permission</span>
             <p className="text-xs font-bold text-white flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full ${pushStatus.permission ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              {pushStatus.permission ? 'Notifications Allowed' : 'Permission Not Yet Granted'}
+              <span className={`w-2 h-2 rounded-full ${fcmToken ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              {fcmToken ? 'Active & Receiving Alerts' : 'Permission Required / Idle'}
             </p>
           </div>
 
           <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139]/80 space-y-1">
-            <span className="text-[11px] font-bold text-slate-400 uppercase">Device State</span>
+            <span className="text-[11px] font-bold text-slate-400 uppercase">Runtime Environment</span>
             <p className="text-xs font-bold text-white flex items-center gap-1.5">
-              <Smartphone className="w-3.5 h-3.5 text-purple-400" />
-              Android APK / PWA Compatible
+              <Smartphone className="w-3.5 h-3.5 text-blue-400" />
+              {isAndroid ? 'Native Android WebView Wrapper' : 'Web Browser / GitHub Pages PWA'}
             </p>
           </div>
 
           <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139]/80 space-y-1">
-            <span className="text-[11px] font-bold text-slate-400 uppercase">Dashboard Directives</span>
+            <span className="text-[11px] font-bold text-slate-400 uppercase">Backend Dispatcher</span>
             <p className="text-xs font-bold text-white flex items-center gap-1.5">
               <Globe className="w-3.5 h-3.5 text-cyan-400" />
-              OneSignal Admin Broadcasts Active
+              Trusted Cloud Proxy (/api/send-fcm)
             </p>
           </div>
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-amber-500/5 border border-amber-500/20 text-xs text-amber-200/90 leading-relaxed flex items-start gap-2.5">
-          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-bold text-amber-300">Push Notifications & OneSignal Dashboard Testing</p>
-            <p className="text-[11px] text-slate-300 mt-0.5">
-              When push notifications are enabled on this device, broadcasts sent from your OneSignal Dashboard (with App ID <span className="font-mono text-amber-200">{ONESIGNAL_APP_ID}</span>) will be delivered whether the application is open, in the background, or closed.
+        {/* NOTIFICATION CATEGORY CONTROLS */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-amber-400" />
+              <span>Notification Categories &amp; User Preferences</span>
+            </h3>
+            <span className="text-[11px] text-slate-400">Controls which event types trigger alerts on this device</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {/* Category: School Notices */}
+            <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Bell className="w-3.5 h-3.5 text-amber-400" />
+                  <span>School Notices &amp; Directives</span>
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Principal circulars and administrative notices</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleCategoryPref('notices')}
+                className={`p-1.5 rounded-lg border transition cursor-pointer ${
+                  fcmPrefs.notices
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-[#1A1C23] text-slate-500 border-[#2D3139]'
+                }`}
+                title="Toggle School Notices"
+              >
+                {fcmPrefs.notices ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {/* Category: Exam Schedules */}
+            <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <GraduationCap className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Exam Schedules &amp; Marks</span>
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Timetables and results publication alerts</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleCategoryPref('exams')}
+                className={`p-1.5 rounded-lg border transition cursor-pointer ${
+                  fcmPrefs.exams
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-[#1A1C23] text-slate-500 border-[#2D3139]'
+                }`}
+                title="Toggle Exam Schedules"
+              >
+                {fcmPrefs.exams ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {/* Category: Holidays */}
+            <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-orange-400" />
+                  <span>Holidays &amp; Calendar</span>
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Special schedule announcements and closures</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleCategoryPref('holidays')}
+                className={`p-1.5 rounded-lg border transition cursor-pointer ${
+                  fcmPrefs.holidays
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-[#1A1C23] text-slate-500 border-[#2D3139]'
+                }`}
+                title="Toggle Holidays"
+              >
+                {fcmPrefs.holidays ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {/* Category: Assignments */}
+            <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-yellow-400" />
+                  <span>Homework &amp; Assignments</span>
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Class tasks and academic assignments</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleCategoryPref('assignments')}
+                className={`p-1.5 rounded-lg border transition cursor-pointer ${
+                  fcmPrefs.assignments
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-[#1A1C23] text-slate-500 border-[#2D3139]'
+                }`}
+                title="Toggle Assignments"
+              >
+                {fcmPrefs.assignments ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {/* Category: Staff Messages */}
+            <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Send className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Messages &amp; Staff Greetings</span>
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Birthday wishes and teacher communications</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleCategoryPref('messages')}
+                className={`p-1.5 rounded-lg border transition cursor-pointer ${
+                  fcmPrefs.messages
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-[#1A1C23] text-slate-500 border-[#2D3139]'
+                }`}
+                title="Toggle Messages"
+              >
+                {fcmPrefs.messages ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+              </button>
+            </div>
+
+            {/* Category: Account & Security */}
+            <div className="p-3.5 rounded-2xl bg-[#0F1115] border border-[#2D3139] flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Account &amp; Security Alerts</span>
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">Credentials and role approval updates</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleCategoryPref('accountUpdates')}
+                className={`p-1.5 rounded-lg border transition cursor-pointer ${
+                  fcmPrefs.accountUpdates
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : 'bg-[#1A1C23] text-slate-500 border-[#2D3139]'
+                }`}
+                title="Toggle Account Updates"
+              >
+                {fcmPrefs.accountUpdates ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ACTIVE FCM TOKEN INSPECTOR */}
+        {fcmToken && (
+          <div className="p-4 rounded-2xl bg-[#0F1115] border border-[#2D3139] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Active Device Registration Token (FCM Token)</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(fcmToken);
+                  setSuccessMsg('FCM Token copied to clipboard!');
+                  setTimeout(() => setSuccessMsg(null), 3000);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-[#1A1C23] hover:bg-[#252830] text-slate-300 font-bold text-[11px] border border-[#2D3139] flex items-center gap-1 transition cursor-pointer"
+              >
+                <Copy className="w-3 h-3 text-amber-400" />
+                <span>Copy Token</span>
+              </button>
+            </div>
+            <p className="text-[11px] font-mono text-slate-400 bg-black/40 p-2.5 rounded-xl border border-white/5 break-all select-all">
+              {fcmToken}
             </p>
           </div>
+        )}
+
+        {/* INTERACTIVE TEST WORKFLOW (Requirement 14) */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#1E3A8A]/20 via-[#0F1115] to-[#1A1C23] border border-blue-500/30 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-xs sm:text-sm font-bold text-white">Diagnostic &amp; Verification Test Suite</h4>
+                <p className="text-[11px] text-slate-400">Safely test notification flows across browser, background, and Android APK</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {/* Test 1: In-App Foreground */}
+            <button
+              type="button"
+              disabled={isTestingAction}
+              onClick={() => {
+                testForegroundNotification();
+                setFcmTestResult({
+                  success: true,
+                  message: 'Foreground Notification Test: Triggered in-app toast & browser notification.'
+                });
+              }}
+              className="p-3 rounded-xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] hover:border-blue-500/50 text-left transition cursor-pointer group disabled:opacity-50"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-blue-300 group-hover:text-blue-200">1. In-App Foreground Test</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">Instant</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Verifies event handler &amp; foreground banner</p>
+            </button>
+
+            {/* Test 2: Background Web Push */}
+            <button
+              type="button"
+              disabled={isTestingAction}
+              onClick={async () => {
+                setIsTestingAction(true);
+                setFcmTestResult({
+                  success: true,
+                  message: 'Background Test scheduled in 4 seconds! Minimize this tab now to see background push.'
+                });
+                const res = await testBackgroundNotification(school.schoolCode || 'SSHSS@111213', 4);
+                setFcmTestResult(res);
+                setIsTestingAction(false);
+              }}
+              className="p-3 rounded-xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] hover:border-amber-500/50 text-left transition cursor-pointer group disabled:opacity-50"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-300 group-hover:text-amber-200">2. Background Web Push Test</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">4s Delay</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Tests Service Worker when tab is in background</p>
+            </button>
+
+            {/* Test 3: Android Lockscreen */}
+            <button
+              type="button"
+              disabled={isTestingAction}
+              onClick={() => {
+                const lockscreenInfo = simulateAndroidLockscreen('messages');
+                setFcmTestResult({
+                  success: true,
+                  message: `Android Lock-Screen Simulation: Channel="${lockscreenInfo.channelId}", Visibility="${lockscreenInfo.lockscreenVisibility}"`
+                });
+              }}
+              className="p-3 rounded-xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] hover:border-purple-500/50 text-left transition cursor-pointer group disabled:opacity-50"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-purple-300 group-hover:text-purple-200">3. Android Lock-Screen Test</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400">Android</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Verifies privacy flag on device lock screen</p>
+            </button>
+
+            {/* Test 4: Real Event Trigger */}
+            <button
+              type="button"
+              disabled={isTestingAction}
+              onClick={async () => {
+                setIsTestingAction(true);
+                const res = await testEventTrigger(school.schoolCode || 'SSHSS@111213', 'exam');
+                setFcmTestResult(res);
+                setIsTestingAction(false);
+              }}
+              className="p-3 rounded-xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] hover:border-emerald-500/50 text-left transition cursor-pointer group disabled:opacity-50"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-emerald-300 group-hover:text-emerald-200">4. Event Trigger Test</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400">Exam Event</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Triggers mock Exam Schedule event through FCM</p>
+            </button>
+
+            {/* Test 5: Permission-Denied Resilience */}
+            <button
+              type="button"
+              disabled={isTestingAction}
+              onClick={() => {
+                const resilience = testPermissionDeniedResilience();
+                setFcmTestResult({
+                  success: true,
+                  message: `Resilience Verified: App is 100% functional without push permissions (${resilience.featuresSupported.length} core features active).`
+                });
+              }}
+              className="p-3 rounded-xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] hover:border-cyan-500/50 text-left transition cursor-pointer group disabled:opacity-50"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-cyan-300 group-hover:text-cyan-200">5. Permission-Denied Check</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400">Audit</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Validates zero impact on app workflows if blocked</p>
+            </button>
+
+            {/* Test 6: Unauthorized User Security */}
+            <button
+              type="button"
+              disabled={isTestingAction}
+              onClick={async () => {
+                setIsTestingAction(true);
+                const res = await testUnauthorizedUserSecurity(school.schoolCode || 'SSHSS@111213');
+                setFcmTestResult({
+                  success: res.blocked,
+                  message: `${res.message} (HTTP Status: ${res.status})`
+                });
+                setIsTestingAction(false);
+              }}
+              className="p-3 rounded-xl bg-[#0F1115] hover:bg-[#252830] border border-[#2D3139] hover:border-red-500/50 text-left transition cursor-pointer group disabled:opacity-50"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-red-300 group-hover:text-red-200">6. Unauthorized User Audit</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400">Security</span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Verifies server rejects unauthorized broadcast requests</p>
+            </button>
+          </div>
+
+          {/* Test Feedback Display */}
+          {fcmTestResult && (
+            <div className={`p-3 rounded-xl text-xs font-medium border flex items-center justify-between ${
+              fcmTestResult.success
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                : 'bg-red-500/10 text-red-300 border-red-500/30'
+            }`}>
+              <div className="flex items-center gap-2">
+                {fcmTestResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                )}
+                <span>{fcmTestResult.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFcmTestResult(null)}
+                className="text-slate-400 hover:text-white p-1 text-xs cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

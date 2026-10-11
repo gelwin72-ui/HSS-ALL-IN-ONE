@@ -141,6 +141,17 @@ service cloud.firestore {
     match /test/{docId} {
       allow read, write: if true;
     }
+
+    // 7. FCM Tokens and Notification Preferences
+    match /fcm_tokens/{tokenId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isSchoolAdmin(resource.data.schoolCode));
+      allow create, update: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isSchoolAdmin(resource.data.schoolCode));
+    }
+
+    match /notification_preferences/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
   }
 }
 

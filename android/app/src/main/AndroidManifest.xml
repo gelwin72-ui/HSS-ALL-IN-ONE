@@ -2,10 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions required for WebView, downloads, and modern camera/file picking -->
+    <!-- Permissions required for WebView, downloads, modern camera/file picking, and push notifications -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Push Notification Permission for Android 13+ (API 33+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Storage permissions for legacy Android (Android 9 and below); Android 10+ uses Scoped Storage -->
     <uses-permission
@@ -57,6 +60,15 @@
             android:label="@string/pdf_viewer_title"
             android:parentActivityName=".MainActivity"
             android:theme="@style/Theme.HSSALLINONE.ActionBar" />
+
+        <!-- Firebase Cloud Messaging Service -->
+        <service
+            android:name=".HSSFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <!-- File Provider for securely sharing camera images and downloaded files -->
         <provider

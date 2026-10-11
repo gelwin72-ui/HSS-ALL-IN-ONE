@@ -24,12 +24,26 @@
         ".write": "auth != null"
       }
     },
+    "fcm_tokens": {
+      "$schoolCode": {
+        ".read": "auth != null",
+        "$uid": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid == $uid"
+        }
+      }
+    },
+    "notification_preferences": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    },
     "unauthorizedAttempts": {
       ".read": "auth != null",
       ".write": "true"
     },
     "teacherSignups": {
-      ".read": "auth != null",
       "$uid": {
         ".read": "auth != null && auth.uid == $uid",
         ".write": "auth != null && auth.uid == $uid"

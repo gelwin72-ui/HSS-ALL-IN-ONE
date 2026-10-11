@@ -59,6 +59,9 @@ public class MainActivity extends AppCompatActivity {
     private boolean isInitialLoaded = false;
     private long lastBackPressTime = 0;
 
+    public static final String EXTRA_TARGET_URL = "extra_target_url";
+    public static final String EXTRA_FROM_NOTIFICATION = "extra_from_notification";
+
     // Activity Result Launcher for File Chooser
     private final ActivityResultLauncher<Intent> fileChooserLauncher =
             registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
@@ -88,8 +91,64 @@ public class MainActivity extends AppCompatActivity {
         setupNoInternetView();
         setupNetworkMonitoring();
 
-        // Load the live target website
+        // Initialize Firebase Messaging and Token
+        initFirebaseMessaging();
+
+        // Request notification permission for Android 13+
+        requestNotificationPermissionExplicit();
+
+        // Handle incoming intent if launched via Push Notification
+        if (getIntent() != null && getIntent().hasExtra(EXTRA_TARGET_URL)) {
+            handleNotificationIntent(getIntent());
+        } else {
+            // Load the live target website
+            loadTargetUrl();
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleNotificationIntent(intent);
+    }
+
+    private void handleNotificationIntent(Intent intent) {
+        if (intent != null && intent.hasExtra(EXTRA_TARGET_URL)) {
+            String targetUrl = intent.getStringExtra(EXTRA_TARGET_URL);
+            if (targetUrl != null && !targetUrl.isEmpty() && binding != null && binding.webView != null) {
+                hideNoInternetScreen();
+                binding.webView.loadUrl(targetUrl);
+                return;
+            }
+        }
         loadTargetUrl();
+    }
+
+    public void requestNotificationPermissionExplicit() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                permissionLauncher.launch(new String[]{android.Manifest.permission.POST_NOTIFICATIONS});
+            }
+        }
+    }
+
+    private void initFirebaseMessaging() {
+        try {
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().getToken()
+                    .addOnCompleteListener(task -> {
+                        if (task.isSuccessful() && task.getResult() != null) {
+                            String token = task.getResult();
+                            android.util.Log.d("MainActivity", "FCM token retrieved: " + token);
+                            getSharedPreferences(HSSFirebaseMessagingService.PREFS_NAME, MODE_PRIVATE)
+                                    .edit()
+                                    .putString(HSSFirebaseMessagingService.PREF_FCM_TOKEN, token)
+                                    .apply();
+                        }
+                    });
+        } catch (Exception e) {
+            android.util.Log.w("MainActivity", "Firebase messaging initialization note:", e);
+        }
     }
 
     private void setupBackNavigation() {
