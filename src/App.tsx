@@ -128,6 +128,22 @@ export function App() {
     };
   }, []);
 
+  // Listen for instant multi-device data synthesis events
+  useEffect(() => {
+    const handleSynthesized = (e: any) => {
+      const activeClass = StorageService.getActiveClassId();
+      refreshAllState(activeClass);
+      const report = e.detail?.report;
+      if (report && (report.studentsSynthesized > 0 || report.attendanceSynthesized > 0 || report.examsSynthesized > 0)) {
+        showToast('⚡ Instant Data Synthesis: Merged latest cloud updates seamlessly across devices', 'success');
+      }
+    };
+    window.addEventListener('hss:cloud-sync-synthesized', handleSynthesized);
+    return () => {
+      window.removeEventListener('hss:cloud-sync-synthesized', handleSynthesized);
+    };
+  }, []);
+
   // Initialize Theme and listen to Auth & Email state for automatic seamless cross-device cloud sync
   useEffect(() => {
     ThemeManager.initTheme();
@@ -659,6 +675,7 @@ export function App() {
   const handleSaveAttendance = (record: AttendanceRecord) => {
     StorageService.saveDailyAttendance(record, activeClassId);
     setAttendance(StorageService.getAttendance(activeClassId));
+    CloudSync.scheduleAutoSync(true);
 
     const session = StorageService.getAuthSession();
     const currentTeacher = session.currentTeacher;
@@ -679,6 +696,7 @@ export function App() {
     const updated = attendance.filter(a => a.id !== recordId);
     StorageService.saveAttendance(updated, activeClassId);
     setAttendance(updated);
+    CloudSync.scheduleAutoSync(true);
     showToast('Attendance record deleted.', 'info');
   };
 
@@ -694,6 +712,7 @@ export function App() {
     }
     StorageService.saveExams(updated, activeClassId);
     setExams(updated);
+    CloudSync.scheduleAutoSync(true);
 
     const session = StorageService.getAuthSession();
     const currentTeacher = session.currentTeacher;
@@ -724,12 +743,14 @@ export function App() {
     const updated = exams.filter(e => e.id !== examId);
     StorageService.saveExams(updated, activeClassId);
     setExams(updated);
+    CloudSync.scheduleAutoSync(true);
     showToast('Exam deleted.', 'info');
   };
 
   const handleSaveMarksRecord = (examId: string, marksRecord: ExamMarksRecord) => {
     StorageService.saveExamMarks(examId, marksRecord, activeClassId);
     setExamMarksMap(StorageService.getExamMarksMap(activeClassId));
+    CloudSync.scheduleAutoSync(true);
 
     const session = StorageService.getAuthSession();
     const currentTeacher = session.currentTeacher;

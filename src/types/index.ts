@@ -304,3 +304,25 @@ export interface AuditLogItem {
   status: 'SUCCESS' | 'DENIED' | 'INFO' | 'WARNING' | 'ERROR';
 }
 
+export interface SynthesisReport {
+  studentsSynthesized: number;
+  attendanceSynthesized: number;
+  examsSynthesized: number;
+  examMarksSynthesized: number;
+  classesSynthesized: number;
+  timetablesSynthesized: number;
+  remindersSynthesized: number;
+  timestamp: string;
+  sourceDeviceId?: string;
+}
+
+export interface ConnectedDevice {
+  deviceId: string;
+  name: string;
+  platform: 'Android APK' | 'Web Browser' | 'PWA Mobile';
+  isCurrentDevice: boolean;
+  lastActiveAt: string;
+  userAgent?: string;
+  appVersion?: string;
+}
+

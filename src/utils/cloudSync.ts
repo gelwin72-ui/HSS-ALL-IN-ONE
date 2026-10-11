@@ -40,7 +40,9 @@ import {
   SchoolAdminAccount,
   TimetableSlot,
   PrincipalBroadcast,
-  AuditLogItem
+  AuditLogItem,
+  SynthesisReport,
+  ConnectedDevice
 } from '../types';
 import { StorageService, registerStorageMutationListener, setStorageMutationSilenced } from './storage';
 
@@ -74,7 +76,7 @@ export interface UserCloudBundle {
 
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error' | 'offline' | 'quota-exceeded';
 
-type SyncListener = (status: SyncStatus, lastSyncedAt?: string, userEmail?: string) => void;
+export type SyncListener = (status: SyncStatus, lastSyncedAt?: string, userEmail?: string, report?: SynthesisReport | null) => void;
 
 class CloudSyncManager {
   private currentStatus: SyncStatus = 'idle';
@@ -90,6 +92,8 @@ class CloudSyncManager {
   private lastSavedPayloadHash: string = '';
   private quotaExhaustedUntil: number = 0;
   private activeSyncEmail: string | undefined = undefined;
+  private lastSynthesisReport: SynthesisReport | null = null;
+  private broadcastChannel: BroadcastChannel | null = null;
   private deviceId: string = (() => {
     let id = '';
     try {
@@ -107,10 +111,129 @@ class CloudSyncManager {
   constructor() {
     this.lastSyncedAt = localStorage.getItem('hss_last_cloud_sync') || undefined;
     this.activeSyncEmail = localStorage.getItem('hss_active_sync_email') || undefined;
+
+    try {
+      const storedReport = localStorage.getItem('hss_last_synthesis_report');
+      if (storedReport) {
+        this.lastSynthesisReport = JSON.parse(storedReport);
+      }
+    } catch {}
+
+    // Initialize BroadcastChannel for 0ms same-origin multi-tab instant synthesis
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        this.broadcastChannel = new BroadcastChannel('hss_instant_data_synthesis');
+        this.broadcastChannel.onmessage = (event) => {
+          if (!event?.data) return;
+          const { type, report, deviceId } = event.data;
+          if (deviceId === this.deviceId && (type === 'DATA_SYNTHESIS_APPLIED' || type === 'STORAGE_MUTATED')) {
+            if (report) this.lastSynthesisReport = report;
+            this.notify('synced');
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('hss:cloud-sync-synthesized', { detail: { report, crossTab: true } }));
+            }
+          }
+        };
+      } catch (e) {
+        console.warn('BroadcastChannel initialization note:', e);
+      }
+    }
+
+    // Multi-tab storage event synchronization
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', (e) => {
+        if (e.key && e.key.startsWith('hss_') && !this.isApplyingRemoteUpdate) {
+          setTimeout(() => {
+            this.notify(this.getStatus());
+            window.dispatchEvent(new CustomEvent('hss:cloud-sync-synthesized', { detail: { crossTab: true } }));
+          }, 15);
+        }
+      });
+
+      // Background to foreground catch-up synthesis
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible' && !this.isApplyingRemoteUpdate) {
+            this.scheduleCatchUpSync();
+          }
+        });
+      }
+      window.addEventListener('focus', () => {
+        if (!this.isApplyingRemoteUpdate) {
+          this.scheduleCatchUpSync();
+        }
+      });
+      window.addEventListener('online', () => {
+        this.notify('syncing');
+        this.forceDeepSynthesis().catch(() => {});
+      });
+    }
   }
 
   public getDeviceId(): string {
     return this.deviceId;
+  }
+
+  public getSynthesisReport(): SynthesisReport | null {
+    return this.lastSynthesisReport;
+  }
+
+  public detectDevicePlatform(): 'Android APK' | 'Web Browser' | 'PWA Mobile' {
+    if (typeof window === 'undefined') return 'Web Browser';
+    const hasAndroidBridge = !!(window as any).AndroidBridge;
+    const isWv = navigator.userAgent.includes('wv') || (navigator.userAgent.includes('Android') && navigator.userAgent.includes('Version/'));
+    if (hasAndroidBridge || isWv) {
+      return 'Android APK';
+    }
+    const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+    if (isStandalone || (navigator as any).standalone) {
+      return 'PWA Mobile';
+    }
+    return 'Web Browser';
+  }
+
+  public getDeviceCustomName(): string {
+    try {
+      const stored = localStorage.getItem('hss_device_custom_name');
+      if (stored) return stored;
+    } catch {}
+    const platform = this.detectDevicePlatform();
+    if (platform === 'Android APK') return 'Android Mobile APK';
+    if (platform === 'PWA Mobile') return 'Mobile PWA App';
+    if (typeof navigator !== 'undefined') {
+      if (navigator.userAgent.includes('Windows')) return 'Windows Workstation';
+      if (navigator.userAgent.includes('Macintosh')) return 'Mac Desktop / Laptop';
+      if (navigator.userAgent.includes('Linux')) return 'Linux Device';
+      if (navigator.userAgent.includes('Android')) return 'Android Web Browser';
+      if (navigator.userAgent.includes('iPhone') || navigator.userAgent.includes('iPad')) return 'iOS Safari Device';
+    }
+    return 'Web Browser Device';
+  }
+
+  public setDeviceCustomName(name: string) {
+    if (!name || !name.trim()) return;
+    try {
+      localStorage.setItem('hss_device_custom_name', name.trim());
+      this.scheduleAutoSync(true);
+    } catch {}
+  }
+
+  private scheduleCatchUpSync() {
+    const user = auth?.currentUser;
+    const email = this.getActiveSyncEmail();
+    if (!user && !email) return;
+
+    if (database && email) {
+      const emailKey = this.sanitizeEmailKey(email);
+      get(ref(database, 'email_accounts/' + emailKey + '/lastSyncedAt')).then(snap => {
+        if (snap.exists()) {
+          const remoteTime = snap.val();
+          if (remoteTime && remoteTime !== this.lastSyncedAt) {
+            this.forceDeepSynthesis().catch(() => {});
+          }
+        }
+      }).catch(() => {});
+    }
   }
 
   public sanitizeEmailKey(email: string): string {
@@ -146,7 +269,7 @@ class CloudSyncManager {
 
   public addListener(listener: SyncListener) {
     this.listeners.add(listener);
-    listener(this.getStatus(), this.lastSyncedAt, this.getActiveSyncEmail());
+    listener(this.getStatus(), this.lastSyncedAt, this.getActiveSyncEmail(), this.lastSynthesisReport);
     return () => {
       this.listeners.delete(listener);
     };
@@ -155,7 +278,7 @@ class CloudSyncManager {
   private notify(status: SyncStatus, error?: any) {
     this.currentStatus = status;
     const userEmail = this.getActiveSyncEmail();
-    this.listeners.forEach(fn => fn(this.getStatus(), this.lastSyncedAt, userEmail));
+    this.listeners.forEach(fn => fn(this.getStatus(), this.lastSyncedAt, userEmail, this.lastSynthesisReport));
   }
 
   public gatherAllLocalData(): UserCloudBundle {
@@ -199,84 +322,460 @@ class CloudSyncManager {
     };
   }
 
-  public applyCloudBundle(bundle: Partial<UserCloudBundle>) {
+  // -------------------------------------------------------------
+  // INTELLIGENT MULTI-DEVICE DATA SYNTHESIS ALGORITHMS
+  // -------------------------------------------------------------
+
+  public synthesizeClasses(local: ClassItem[] = [], remote: ClassItem[] = []): ClassItem[] {
+    const map = new Map<string, ClassItem>();
+    (remote || []).forEach(c => {
+      if (c && c.id) map.set(c.id, { ...c });
+    });
+    (local || []).forEach(c => {
+      if (c && c.id) {
+        if (!map.has(c.id)) {
+          map.set(c.id, { ...c });
+        } else {
+          const existing = map.get(c.id)!;
+          map.set(c.id, {
+            ...existing,
+            ...c,
+            id: c.id,
+            className: c.className || existing.className,
+            standard: c.standard || existing.standard,
+            section: c.section || existing.section,
+            stream: c.stream || existing.stream,
+            academicYear: c.academicYear || existing.academicYear,
+            classStrength: Math.max(c.classStrength || 0, existing.classStrength || 0)
+          });
+        }
+      }
+    });
+    return Array.from(map.values());
+  }
+
+  public synthesizeStudentLists(local: Student[] = [], remote: Student[] = []): Student[] {
+    const studentMap = new Map<string, Student>();
+    const rollMap = new Map<number, string>(); // rollNo -> studentId
+
+    const registerStudent = (st: Student) => {
+      if (!st || !st.id) return;
+      const rollNum = typeof st.rollNo === 'number' ? st.rollNo : parseInt(st.rollNo as any, 10) || 0;
+
+      if (rollNum > 0 && rollMap.has(rollNum)) {
+        const existingId = rollMap.get(rollNum)!;
+        const existing = studentMap.get(existingId)!;
+        studentMap.set(existingId, {
+          ...existing,
+          ...st,
+          id: existingId,
+          name: st.name || existing.name,
+          rollNo: rollNum,
+          admissionNo: st.admissionNo || existing.admissionNo,
+          phone: st.phone || existing.phone,
+          parentName: st.parentName || existing.parentName,
+          parentPhone: st.parentPhone || existing.parentPhone,
+          guardianPhone: st.guardianPhone || existing.guardianPhone,
+          division: st.division || existing.division,
+          gender: st.gender || existing.gender,
+          dob: st.dob || existing.dob,
+          address: st.address || existing.address,
+          bloodGroup: st.bloodGroup || existing.bloodGroup,
+          notes: st.notes || existing.notes,
+          photoUrl: st.photoUrl || existing.photoUrl,
+          avatar: st.avatar || existing.avatar,
+          createdAt: existing.createdAt || st.createdAt
+        });
+        return;
+      }
+
+      if (studentMap.has(st.id)) {
+        const existing = studentMap.get(st.id)!;
+        studentMap.set(st.id, {
+          ...existing,
+          ...st,
+          name: st.name || existing.name,
+          rollNo: rollNum || existing.rollNo,
+          admissionNo: st.admissionNo || existing.admissionNo,
+          phone: st.phone || existing.phone,
+          parentName: st.parentName || existing.parentName,
+          parentPhone: st.parentPhone || existing.parentPhone,
+          guardianPhone: st.guardianPhone || existing.guardianPhone,
+          division: st.division || existing.division,
+          gender: st.gender || existing.gender,
+          dob: st.dob || existing.dob,
+          address: st.address || existing.address,
+          bloodGroup: st.bloodGroup || existing.bloodGroup,
+          notes: st.notes || existing.notes,
+          photoUrl: st.photoUrl || existing.photoUrl,
+          avatar: st.avatar || existing.avatar,
+          createdAt: existing.createdAt || st.createdAt
+        });
+      } else {
+        studentMap.set(st.id, { ...st, rollNo: rollNum });
+        if (rollNum > 0) rollMap.set(rollNum, st.id);
+      }
+    };
+
+    (remote || []).forEach(registerStudent);
+    (local || []).forEach(registerStudent);
+
+    const result = Array.from(studentMap.values());
+    result.sort((a, b) => a.rollNo - b.rollNo);
+    return result;
+  }
+
+  public synthesizeAttendanceRecords(local: AttendanceRecord[] = [], remote: AttendanceRecord[] = []): AttendanceRecord[] {
+    const attendanceMap = new Map<string, AttendanceRecord>();
+
+    const mergeRecord = (rec: AttendanceRecord) => {
+      if (!rec || !rec.date) return;
+      const key = rec.date.trim();
+      if (!attendanceMap.has(key)) {
+        attendanceMap.set(key, { ...rec });
+      } else {
+        const existing = attendanceMap.get(key)!;
+        const presentSet = new Set<string>([
+          ...(existing.presentStudentIds || []),
+          ...(rec.presentStudentIds || [])
+        ]);
+        const absentSet = new Set<string>([
+          ...(existing.absentStudentIds || []),
+          ...(rec.absentStudentIds || [])
+        ]);
+        presentSet.forEach(id => absentSet.delete(id));
+
+        attendanceMap.set(key, {
+          ...existing,
+          ...rec,
+          id: existing.id || rec.id,
+          date: key,
+          presentStudentIds: Array.from(presentSet),
+          absentStudentIds: Array.from(absentSet),
+          notes: rec.notes || existing.notes,
+          savedAt: rec.savedAt || existing.savedAt || new Date().toISOString()
+        });
+      }
+    };
+
+    (remote || []).forEach(mergeRecord);
+    (local || []).forEach(mergeRecord);
+
+    const result = Array.from(attendanceMap.values());
+    result.sort((a, b) => b.date.localeCompare(a.date));
+    return result;
+  }
+
+  public synthesizeExamLists(local: Exam[] = [], remote: Exam[] = []): Exam[] {
+    const examMap = new Map<string, Exam>();
+
+    const mergeExam = (ex: Exam) => {
+      if (!ex || !ex.id) return;
+      if (!examMap.has(ex.id)) {
+        examMap.set(ex.id, { ...ex });
+      } else {
+        const existing = examMap.get(ex.id)!;
+        const subjectMap = new Map<string, any>();
+        (existing.subjects || []).forEach(s => subjectMap.set(s.id || s.name, s));
+        (ex.subjects || []).forEach(s => {
+          const k = s.id || s.name;
+          if (subjectMap.has(k)) {
+            subjectMap.set(k, { ...subjectMap.get(k), ...s });
+          } else {
+            subjectMap.set(k, { ...s });
+          }
+        });
+
+        examMap.set(ex.id, {
+          ...existing,
+          ...ex,
+          id: ex.id,
+          name: ex.name || existing.name,
+          subjects: Array.from(subjectMap.values())
+        });
+      }
+    };
+
+    (remote || []).forEach(mergeExam);
+    (local || []).forEach(mergeExam);
+
+    return Array.from(examMap.values());
+  }
+
+  public synthesizeExamMarksMap(
+    localMap: Record<string, ExamMarksRecord> = {},
+    remoteMap: Record<string, ExamMarksRecord> = {}
+  ): Record<string, ExamMarksRecord> {
+    const result: Record<string, ExamMarksRecord> = {};
+    const allExamIds = Array.from(new Set([...Object.keys(localMap || {}), ...Object.keys(remoteMap || {})]));
+
+    allExamIds.forEach(examId => {
+      const localRec = localMap?.[examId];
+      const remoteRec = remoteMap?.[examId];
+
+      if (localRec && !remoteRec) {
+        result[examId] = localRec;
+      } else if (!localRec && remoteRec) {
+        result[examId] = remoteRec;
+      } else if (localRec && remoteRec) {
+        const mergedMarks: Record<string, any> = {};
+        const allStudentIds = Array.from(new Set([
+          ...Object.keys(localRec.marks || {}),
+          ...Object.keys(remoteRec.marks || {})
+        ]));
+
+        allStudentIds.forEach(studentId => {
+          const localStMarks = localRec.marks?.[studentId];
+          const remoteStMarks = remoteRec.marks?.[studentId];
+
+          if (localStMarks && !remoteStMarks) {
+            mergedMarks[studentId] = localStMarks;
+          } else if (!localStMarks && remoteStMarks) {
+            mergedMarks[studentId] = remoteStMarks;
+          } else if (localStMarks && remoteStMarks) {
+            const mergedSubjectMarks: Record<string, number | null> = {
+              ...(localStMarks.marks || {}),
+              ...(remoteStMarks.marks || {})
+            };
+            const mergedAbsent: Record<string, boolean> = {
+              ...(localStMarks.isAbsent || {}),
+              ...(remoteStMarks.isAbsent || {})
+            };
+
+            const total = Object.values(mergedSubjectMarks).reduce((acc: number, val) => {
+              return acc + (typeof val === 'number' ? val : 0);
+            }, 0);
+
+            mergedMarks[studentId] = {
+              ...localStMarks,
+              ...remoteStMarks,
+              studentId,
+              marks: mergedSubjectMarks,
+              isAbsent: mergedAbsent,
+              totalObtained: total || localStMarks.totalObtained || remoteStMarks.totalObtained
+            };
+          }
+        });
+
+        result[examId] = {
+          ...localRec,
+          ...remoteRec,
+          examId,
+          marks: mergedMarks,
+          updatedAt: new Date().toISOString()
+        };
+      }
+    });
+
+    return result;
+  }
+
+  public synthesizeTimetableSlots(local: TimetableSlot[] = [], remote: TimetableSlot[] = []): TimetableSlot[] {
+    const slotMap = new Map<string, TimetableSlot>();
+    (remote || []).forEach(s => {
+      if (s && s.id) slotMap.set(s.id, { ...s });
+    });
+    (local || []).forEach(s => {
+      if (s && s.id) {
+        if (!slotMap.has(s.id)) {
+          slotMap.set(s.id, { ...s });
+        } else {
+          slotMap.set(s.id, { ...slotMap.get(s.id)!, ...s, id: s.id });
+        }
+      }
+    });
+    return Array.from(slotMap.values());
+  }
+
+  public synthesizeRemindersList(local: Reminder[] = [], remote: Reminder[] = []): Reminder[] {
+    const reminderMap = new Map<string, Reminder>();
+    (remote || []).forEach(r => {
+      if (r && r.id) reminderMap.set(r.id, { ...r });
+    });
+    (local || []).forEach(r => {
+      if (r && r.id) {
+        if (!reminderMap.has(r.id)) {
+          reminderMap.set(r.id, { ...r });
+        } else {
+          const existing = reminderMap.get(r.id)!;
+          reminderMap.set(r.id, {
+            ...existing,
+            ...r,
+            id: r.id,
+            isCompleted: existing.isCompleted || r.isCompleted
+          });
+        }
+      }
+    });
+    const res = Array.from(reminderMap.values());
+    res.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    return res;
+  }
+
+  public synthesizeDataBundle(
+    local: UserCloudBundle,
+    remote: Partial<UserCloudBundle>,
+    sourceDeviceId?: string
+  ): { synthesized: UserCloudBundle; report: SynthesisReport } {
+    const synthesizedClasses = this.synthesizeClasses(local.classesCatalog, remote.classesCatalog);
+
+    // Synthesize classScopedData
+    const synthesizedClassData: Record<string, ClassScopedData> = {};
+    const allClassesIds = Array.from(new Set([
+      ...synthesizedClasses.map(c => c.id),
+      ...Object.keys(local.classData || {}),
+      ...Object.keys(remote.classData || {})
+    ]));
+
+    let totalStudentsSynthesized = 0;
+    let totalAttendanceSynthesized = 0;
+    let totalExamsSynthesized = 0;
+    let totalMarksSynthesized = 0;
+
+    allClassesIds.forEach(cid => {
+      const localScoped = local.classData?.[cid] || {
+        students: cid === local.activeClassId ? (local.students || []) : [],
+        attendance: cid === local.activeClassId ? (local.attendance || []) : [],
+        exams: cid === local.activeClassId ? (local.exams || []) : [],
+        examMarksMap: cid === local.activeClassId ? (local.examMarks || {}) : {}
+      };
+
+      const remoteScoped = remote.classData?.[cid] || {
+        students: cid === remote.activeClassId ? (remote.students || []) : [],
+        attendance: cid === remote.activeClassId ? (remote.attendance || []) : [],
+        exams: cid === remote.activeClassId ? (remote.exams || []) : [],
+        examMarksMap: cid === remote.activeClassId ? (remote.examMarks || {}) : {}
+      };
+
+      const synthStudents = this.synthesizeStudentLists(localScoped.students, remoteScoped.students);
+      const synthAttendance = this.synthesizeAttendanceRecords(localScoped.attendance, remoteScoped.attendance);
+      const synthExams = this.synthesizeExamLists(localScoped.exams, remoteScoped.exams);
+      const synthMarks = this.synthesizeExamMarksMap(localScoped.examMarksMap, remoteScoped.examMarksMap);
+
+      synthesizedClassData[cid] = {
+        students: synthStudents,
+        attendance: synthAttendance,
+        exams: synthExams,
+        examMarksMap: synthMarks
+      };
+
+      totalStudentsSynthesized += synthStudents.length;
+      totalAttendanceSynthesized += synthAttendance.length;
+      totalExamsSynthesized += synthExams.length;
+      totalMarksSynthesized += Object.keys(synthMarks).length;
+    });
+
+    const synthesizedTimetables = this.synthesizeTimetableSlots(local.timetables, remote.timetables);
+    const synthesizedReminders = this.synthesizeRemindersList(local.reminders, remote.reminders);
+
+    // Synthesize teacher accounts & school admins
+    const teacherAccountsMap = new Map<string, TeacherAccount>();
+    (remote.teacherAccounts || []).forEach(t => t?.id && teacherAccountsMap.set(t.id, t));
+    (local.teacherAccounts || []).forEach(t => t?.id && teacherAccountsMap.set(t.id, { ...teacherAccountsMap.get(t.id), ...t }));
+
+    const schoolAdminsMap = new Map<string, SchoolAdminAccount>();
+    (remote.schoolAdmins || []).forEach(a => a?.id && schoolAdminsMap.set(a.id, a));
+    (local.schoolAdmins || []).forEach(a => a?.id && schoolAdminsMap.set(a.id, { ...schoolAdminsMap.get(a.id), ...a }));
+
+    const activeCid = remote.activeClassId || local.activeClassId || synthesizedClasses[0]?.id || '';
+
+    const synthesized: UserCloudBundle = {
+      version: '2.5.0',
+      lastSyncedAt: new Date().toISOString(),
+      deviceId: this.deviceId,
+      schoolProfile: { ...local.schoolProfile, ...(remote.schoolProfile || {}) },
+      teacherInfo: { ...local.teacherInfo, ...(remote.teacherInfo || {}) },
+      classesCatalog: synthesizedClasses,
+      activeClassId: activeCid,
+      classInfo: { ...local.classInfo, ...(remote.classInfo || {}) },
+      reminders: synthesizedReminders,
+      settings: { ...local.settings, ...(remote.settings || {}) },
+      teacherAccounts: Array.from(teacherAccountsMap.values()),
+      schoolAdmins: Array.from(schoolAdminsMap.values()),
+      timetables: synthesizedTimetables,
+      classData: synthesizedClassData,
+      students: synthesizedClassData[activeCid]?.students || [],
+      attendance: synthesizedClassData[activeCid]?.attendance || [],
+      exams: synthesizedClassData[activeCid]?.exams || [],
+      examMarks: synthesizedClassData[activeCid]?.examMarksMap || {}
+    };
+
+    const report: SynthesisReport = {
+      studentsSynthesized: totalStudentsSynthesized,
+      attendanceSynthesized: totalAttendanceSynthesized,
+      examsSynthesized: totalExamsSynthesized,
+      examMarksSynthesized: totalMarksSynthesized,
+      classesSynthesized: synthesizedClasses.length,
+      timetablesSynthesized: synthesizedTimetables.length,
+      remindersSynthesized: synthesizedReminders.length,
+      timestamp: new Date().toISOString(),
+      sourceDeviceId: sourceDeviceId || remote.deviceId || 'cloud'
+    };
+
+    return { synthesized, report };
+  }
+
+  public applyCloudBundle(bundle: Partial<UserCloudBundle>, sourceDeviceId?: string): SynthesisReport {
     this.isApplyingRemoteUpdate = true;
     setStorageMutationSilenced(true);
     try {
-      if (bundle.schoolProfile) {
-        StorageService.saveSchoolProfile(bundle.schoolProfile);
+      const local = this.gatherAllLocalData();
+      const { synthesized, report } = this.synthesizeDataBundle(local, bundle, sourceDeviceId);
+
+      if (synthesized.schoolProfile) {
+        StorageService.saveSchoolProfile(synthesized.schoolProfile);
       }
-      if (bundle.teacherInfo) {
-        StorageService.saveTeacherInfo(bundle.teacherInfo);
+      if (synthesized.teacherInfo) {
+        StorageService.saveTeacherInfo(synthesized.teacherInfo);
       }
-      if (bundle.classesCatalog && Array.isArray(bundle.classesCatalog) && bundle.classesCatalog.length > 0) {
-        const localClasses = StorageService.getClassesList();
-        const mergedMap = new Map<string, ClassItem>();
-        bundle.classesCatalog.forEach(c => {
-          if (c && c.id) mergedMap.set(c.id, c);
-        });
-        localClasses.forEach(c => {
-          if (c && c.id) {
-            if (!mergedMap.has(c.id)) {
-              mergedMap.set(c.id, c);
-            } else {
-              const existing = mergedMap.get(c.id)!;
-              mergedMap.set(c.id, { ...existing, ...c, id: c.id });
-            }
-          }
-        });
-        StorageService.saveClassesList(Array.from(mergedMap.values()));
+      if (synthesized.classesCatalog && Array.isArray(synthesized.classesCatalog) && synthesized.classesCatalog.length > 0) {
+        StorageService.saveClassesList(synthesized.classesCatalog);
       }
+
       const session = StorageService.getAuthSession();
       const currentTeacher = session.currentTeacher;
-      const targetClassId = bundle.activeClassId || 
-        (bundle.classesCatalog && bundle.classesCatalog.length > 0 ? bundle.classesCatalog[0].id : '') ||
+      const targetClassId = synthesized.activeClassId || 
         StorageService.getActiveClassId(currentTeacher?.id || currentTeacher?.uid, currentTeacher?.email);
       if (targetClassId) {
         StorageService.setActiveClassId(targetClassId);
       }
-      if (bundle.classInfo) {
-        StorageService.saveClassInfo(bundle.classInfo, targetClassId || bundle.activeClassId);
+      if (synthesized.classInfo) {
+        StorageService.saveClassInfo(synthesized.classInfo, targetClassId);
       }
-      if (bundle.reminders && Array.isArray(bundle.reminders)) {
-        StorageService.saveReminders(bundle.reminders);
+      if (synthesized.reminders) {
+        StorageService.saveReminders(synthesized.reminders);
       }
-      if (bundle.settings) {
-        StorageService.saveSettings(bundle.settings);
+      if (synthesized.settings) {
+        StorageService.saveSettings(synthesized.settings);
       }
-      if (bundle.teacherAccounts && Array.isArray(bundle.teacherAccounts) && bundle.teacherAccounts.length > 0) {
-        StorageService.saveTeacherAccounts(bundle.teacherAccounts);
+      if (synthesized.teacherAccounts && synthesized.teacherAccounts.length > 0) {
+        StorageService.saveTeacherAccounts(synthesized.teacherAccounts);
       }
-      if (bundle.schoolAdmins && Array.isArray(bundle.schoolAdmins) && bundle.schoolAdmins.length > 0) {
-        StorageService.saveSchoolAdmins(bundle.schoolAdmins);
+      if (synthesized.schoolAdmins && synthesized.schoolAdmins.length > 0) {
+        StorageService.saveSchoolAdmins(synthesized.schoolAdmins);
       }
-      if (bundle.timetables && Array.isArray(bundle.timetables) && bundle.timetables.length > 0) {
-        StorageService.saveTimetables(bundle.timetables);
+      if (synthesized.timetables) {
+        StorageService.saveTimetables(synthesized.timetables);
       }
 
-      if (bundle.classData && typeof bundle.classData === 'object') {
-        Object.entries(bundle.classData).forEach(([classId, data]) => {
+      if (synthesized.classData) {
+        Object.entries(synthesized.classData).forEach(([classId, data]) => {
           if (data) {
-            if (Array.isArray(data.students)) StorageService.saveStudents(data.students, classId);
-            if (Array.isArray(data.attendance)) StorageService.saveAttendance(data.attendance, classId);
-            if (Array.isArray(data.exams)) StorageService.saveExams(data.exams, classId);
-            if (data.examMarksMap) StorageService.saveExamMarksMap(data.examMarksMap, classId);
+            StorageService.saveStudents(data.students || [], classId);
+            StorageService.saveAttendance(data.attendance || [], classId);
+            StorageService.saveExams(data.exams || [], classId);
+            StorageService.saveExamMarksMap(data.examMarksMap || {}, classId);
           }
         });
 
         // Ensure active class scoped data is also set to default active storage
-        if (targetClassId && bundle.classData[targetClassId]) {
-          const activeScoped = bundle.classData[targetClassId];
-          if (Array.isArray(activeScoped.students)) StorageService.saveStudents(activeScoped.students);
-          if (Array.isArray(activeScoped.attendance)) StorageService.saveAttendance(activeScoped.attendance);
-          if (Array.isArray(activeScoped.exams)) StorageService.saveExams(activeScoped.exams);
-          if (activeScoped.examMarksMap) StorageService.saveExamMarksMap(activeScoped.examMarksMap);
+        if (targetClassId && synthesized.classData[targetClassId]) {
+          const activeScoped = synthesized.classData[targetClassId];
+          StorageService.saveStudents(activeScoped.students || []);
+          StorageService.saveAttendance(activeScoped.attendance || []);
+          StorageService.saveExams(activeScoped.exams || []);
+          StorageService.saveExamMarksMap(activeScoped.examMarksMap || {});
         }
-      } else {
-        if (Array.isArray(bundle.students)) StorageService.saveStudents(bundle.students);
-        if (Array.isArray(bundle.attendance)) StorageService.saveAttendance(bundle.attendance);
-        if (Array.isArray(bundle.exams)) StorageService.saveExams(bundle.exams);
-        if (bundle.examMarks) StorageService.saveExamMarksMap(bundle.examMarks);
       }
 
       if (bundle.lastSyncedAt) {
@@ -284,13 +783,36 @@ class CloudSyncManager {
         localStorage.setItem('hss_last_cloud_sync', bundle.lastSyncedAt);
       }
 
+      this.lastSynthesisReport = report;
+      try {
+        localStorage.setItem('hss_last_synthesis_report', JSON.stringify(report));
+      } catch {}
+
+      // Broadcast across open browser tabs / windows in 0ms
+      if (this.broadcastChannel) {
+        try {
+          this.broadcastChannel.postMessage({
+            type: 'DATA_SYNTHESIS_APPLIED',
+            report,
+            deviceId: this.deviceId,
+            timestamp: Date.now()
+          });
+        } catch {}
+      }
+
+      // Dispatch custom DOM event
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('hss:cloud-sync-synthesized', { detail: { report } }));
+      }
+
       const currentBundle = this.gatherAllLocalData();
       this.lastSavedPayloadHash = this.computeBundleHash(currentBundle);
+      return report;
     } finally {
       setTimeout(() => {
         setStorageMutationSilenced(false);
         this.isApplyingRemoteUpdate = false;
-      }, 250);
+      }, 100);
     }
   }
 
@@ -477,8 +999,42 @@ class CloudSyncManager {
         }
       }
 
+      // Update device presence heartbeat
+      const devicePresencePayload = {
+        deviceId: this.deviceId,
+        name: this.getDeviceCustomName(),
+        platform: this.detectDevicePlatform(),
+        lastActiveAt: new Date().toISOString(),
+        appVersion: '2.5.0',
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : ''
+      };
+
+      if (database) {
+        if (currentUser) {
+          promises.push(
+            set(ref(database, 'users/' + currentUser.uid + '/devices/' + this.deviceId), devicePresencePayload).catch(() => {})
+          );
+        }
+        if (syncEmail) {
+          const emailKey = this.sanitizeEmailKey(syncEmail);
+          promises.push(
+            set(ref(database, 'email_accounts/' + emailKey + '/devices/' + this.deviceId), devicePresencePayload).catch(() => {})
+          );
+        }
+      }
+
       // Non-blocking parallel execution: all cloud writes execute simultaneously
       await Promise.allSettled(promises);
+
+      if (this.broadcastChannel) {
+        try {
+          this.broadcastChannel.postMessage({
+            type: 'DATA_PUSHED',
+            deviceId: this.deviceId,
+            timestamp: Date.now()
+          });
+        } catch {}
+      }
 
       this.lastSavedPayloadHash = currentHash;
       this.lastSyncedAt = bundle.lastSyncedAt;
@@ -489,6 +1045,108 @@ class CloudSyncManager {
       console.warn('Sync status notice:', err);
       this.notify('error', err);
       return false;
+    }
+  }
+
+  public async getConnectedDevices(): Promise<ConnectedDevice[]> {
+    const devicesMap = new Map<string, ConnectedDevice>();
+
+    // Current device always present
+    const currentDevice: ConnectedDevice = {
+      deviceId: this.deviceId,
+      name: this.getDeviceCustomName(),
+      platform: this.detectDevicePlatform(),
+      isCurrentDevice: true,
+      lastActiveAt: new Date().toISOString(),
+      appVersion: '2.5.0',
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : ''
+    };
+    devicesMap.set(this.deviceId, currentDevice);
+
+    const currentUser = auth?.currentUser;
+    const syncEmail = this.getActiveSyncEmail();
+
+    if (database) {
+      const pathsToQuery: string[] = [];
+      if (currentUser) pathsToQuery.push('users/' + currentUser.uid + '/devices');
+      if (syncEmail) pathsToQuery.push('email_accounts/' + this.sanitizeEmailKey(syncEmail) + '/devices');
+
+      for (const p of pathsToQuery) {
+        try {
+          const snap = await get(ref(database, p));
+          if (snap.exists()) {
+            const data = snap.val();
+            if (data && typeof data === 'object') {
+              Object.entries(data).forEach(([devId, devInfo]: [string, any]) => {
+                if (devId && devInfo) {
+                  const isCurrent = devId === this.deviceId;
+                  const lastActive = devInfo.lastActiveAt || devInfo.updatedAt || new Date().toISOString();
+                  const ageMs = Date.now() - new Date(lastActive).getTime();
+                  if (ageMs < 48 * 3600 * 1000) {
+                    devicesMap.set(devId, {
+                      deviceId: devId,
+                      name: isCurrent ? currentDevice.name : (devInfo.name || 'Connected Device'),
+                      platform: devInfo.platform || 'Web Browser',
+                      isCurrentDevice: isCurrent,
+                      lastActiveAt: lastActive,
+                      appVersion: devInfo.appVersion || '2.5.0',
+                      userAgent: devInfo.userAgent || ''
+                    });
+                  }
+                }
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Connected devices query note:', e);
+        }
+      }
+    }
+
+    return Array.from(devicesMap.values()).sort((a, b) => (b.isCurrentDevice ? 1 : 0) - (a.isCurrentDevice ? 1 : 0));
+  }
+
+  public async forceDeepSynthesis(): Promise<{ success: boolean; report: SynthesisReport | null }> {
+    this.notify('syncing');
+    try {
+      const currentUser = auth?.currentUser;
+      const syncEmail = this.getActiveSyncEmail();
+      let remoteBundle: Partial<UserCloudBundle> | null = null;
+      let sourceDev = '';
+
+      if (currentUser) {
+        const res = await this.fetchFromCloud(currentUser);
+        if (res.found && res.data) {
+          remoteBundle = res.data;
+          sourceDev = res.data.deviceId || '';
+        }
+      }
+      if (!remoteBundle && syncEmail) {
+        const res = await this.fetchAccountByEmail(syncEmail);
+        if (res.found && res.appData) {
+          remoteBundle = res.appData;
+          sourceDev = res.appData.deviceId || '';
+        }
+      }
+
+      let report: SynthesisReport | null = null;
+      if (remoteBundle) {
+        report = this.applyCloudBundle(remoteBundle, sourceDev);
+      } else {
+        const local = this.gatherAllLocalData();
+        const synthRes = this.synthesizeDataBundle(local, {}, this.deviceId);
+        report = synthRes.report;
+        this.lastSynthesisReport = report;
+      }
+
+      // Push synthesized bundle to cloud immediately
+      await this.pushToCloud();
+      this.notify('synced');
+      return { success: true, report };
+    } catch (err) {
+      console.warn('forceDeepSynthesis note:', err);
+      this.notify('error', err);
+      return { success: false, report: null };
     }
   }
 
@@ -810,7 +1468,7 @@ class CloudSyncManager {
               }
 
               if (incomingTimestamp && incomingTimestamp !== this.lastSyncedAt) {
-                this.applyCloudBundle(data.appData);
+                this.applyCloudBundle(data.appData, updateDeviceId);
                 this.lastSyncedAt = incomingTimestamp;
                 this.notify('synced');
                 if (onDataRefreshed) {
@@ -865,7 +1523,7 @@ class CloudSyncManager {
               }
 
               if (incomingTimestamp && incomingTimestamp !== this.lastSyncedAt) {
-                this.applyCloudBundle(data.appData);
+                this.applyCloudBundle(data.appData, updateDeviceId);
                 this.lastSyncedAt = incomingTimestamp;
                 this.notify('synced');
                 if (onDataRefreshed) {
@@ -3012,7 +3670,7 @@ class CloudSyncManager {
     }
   }
 
-  public scheduleAutoSync() {
+  public scheduleAutoSync(immediate: boolean = false) {
     const syncEmail = this.getActiveSyncEmail();
     if (!auth?.currentUser && !syncEmail) return;
     if (this.isApplyingRemoteUpdate) return;
@@ -3020,10 +3678,12 @@ class CloudSyncManager {
 
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
     }
+    const delay = immediate ? 15 : 60;
     this.debounceTimer = setTimeout(() => {
       this.pushToCloud();
-    }, 400);
+    }, delay);
   }
 }
 
