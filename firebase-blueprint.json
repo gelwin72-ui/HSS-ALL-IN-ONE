@@ -1,0 +1,270 @@
+{
+  "entities": {
+    "School": {
+      "title": "School",
+      "description": "School institution profile and administrator credentials",
+      "type": "object",
+      "properties": {
+        "schoolName": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "address": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "principalName": { "type": "string" },
+        "principalPhone": { "type": "string" },
+        "adminPin": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["schoolCode", "schoolName"]
+    },
+    "Teacher": {
+      "title": "Teacher",
+      "description": "Teacher profile and assignment details",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "dob": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "schoolName": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "subject": { "type": "string" },
+        "designation": { "type": "string" },
+        "isClassTeacher": { "type": "boolean" },
+        "standard": { "type": "string" },
+        "stream": { "type": "string" },
+        "section": { "type": "string" },
+        "avatar": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "email", "schoolCode"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student record in a class roster",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "classId": { "type": "string" },
+        "rollNumber": { "type": "number" },
+        "admissionNumber": { "type": "string" },
+        "fullName": { "type": "string" },
+        "studentPhone": { "type": "string" },
+        "parentName": { "type": "string" },
+        "parentPhone": { "type": "string" },
+        "gender": { "type": "string" },
+        "dob": { "type": "string" },
+        "bloodGroup": { "type": "string" },
+        "address": { "type": "string" },
+        "notes": { "type": "string" },
+        "photo": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["fullName", "rollNumber", "schoolCode", "classId"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Daily class attendance register",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "classId": { "type": "string" },
+        "date": { "type": "string" },
+        "records": { "type": "object" },
+        "presentCount": { "type": "number" },
+        "absentCount": { "type": "number" },
+        "totalStudents": { "type": "number" },
+        "attendanceRate": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["date", "schoolCode", "classId"]
+    },
+    "Exam": {
+      "title": "Exam",
+      "description": "Examination specification and subject configuration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "classId": { "type": "string" },
+        "examName": { "type": "string" },
+        "examType": { "type": "string" },
+        "examDate": { "type": "string" },
+        "subjects": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["examName", "schoolCode", "classId"]
+    },
+    "MarkEntry": {
+      "title": "MarkEntry",
+      "description": "Student exam mark entries",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "examId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "classId": { "type": "string" },
+        "subjectMarks": { "type": "object" },
+        "totalMarks": { "type": "number" },
+        "percentage": { "type": "number" },
+        "grade": { "type": "string" },
+        "rank": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["examId", "studentId", "schoolCode"]
+    },
+    "Reminder": {
+      "title": "Reminder",
+      "description": "Teacher task reminder or calendar alert",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "category": { "type": "string" },
+        "repeat": { "type": "string" },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["title", "teacherId"]
+    },
+    "Directive": {
+      "title": "Directive",
+      "description": "Principal broadcast directive to teachers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "title": { "type": "string" },
+        "targetAudience": { "type": "string" },
+        "category": { "type": "string" },
+        "priority": { "type": "string" },
+        "message": { "type": "string" },
+        "senderName": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["title", "schoolCode", "message"]
+    },
+    "AppReview": {
+      "title": "AppReview",
+      "description": "User app rating and review feedback",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorName": { "type": "string" },
+        "role": { "type": "string" },
+        "rating": { "type": "number" },
+        "title": { "type": "string" },
+        "comment": { "type": "string" },
+        "date": { "type": "string" },
+        "schoolCode": { "type": "string" }
+      },
+      "required": ["authorName", "rating", "comment"]
+    },
+    "BlacklistedTeacher": {
+      "title": "BlacklistedTeacher",
+      "description": "Permanently restricted teacher registration record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "blacklistedAt": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "required": ["email", "schoolCode"]
+    },
+    "TeacherCredentials": {
+      "title": "TeacherCredentials",
+      "description": "Teacher Gmail, password, DOB, and school code credentials record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "dob": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["email", "password", "dob", "schoolCode"]
+    },
+    "SchoolTeacherRecords": {
+      "title": "SchoolTeacherRecords",
+      "description": "Teacher profile and credentials indexed under school code",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "schoolCode": { "type": "string" },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "dob": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "subject": { "type": "string" },
+        "designation": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["schoolCode", "email"]
+    }
+  },
+  "firestore": {
+    "/schools/{schoolId}": {
+      "schema": { "$ref": "#/entities/School" },
+      "description": "School profiles"
+    },
+    "/teachers/{teacherId}": {
+      "schema": { "$ref": "#/entities/Teacher" },
+      "description": "Teacher accounts"
+    },
+    "/students/{studentId}": {
+      "schema": { "$ref": "#/entities/Student" },
+      "description": "Student roster items"
+    },
+    "/attendance/{attendanceId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Class daily attendance"
+    },
+    "/exams/{examId}": {
+      "schema": { "$ref": "#/entities/Exam" },
+      "description": "Exam definitions"
+    },
+    "/marks/{markId}": {
+      "schema": { "$ref": "#/entities/MarkEntry" },
+      "description": "Marks scored by students"
+    },
+    "/reminders/{reminderId}": {
+      "schema": { "$ref": "#/entities/Reminder" },
+      "description": "Teacher reminders"
+    },
+    "/directives/{directiveId}": {
+      "schema": { "$ref": "#/entities/Directive" },
+      "description": "Broadcast directives"
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/AppReview" },
+      "description": "App reviews and community ratings"
+    },
+    "/blacklistedTeachers/{id}": {
+      "schema": { "$ref": "#/entities/BlacklistedTeacher" },
+      "description": "Blacklisted teacher records"
+    },
+    "/teacherCredentials/{id}": {
+      "schema": { "$ref": "#/entities/TeacherCredentials" },
+      "description": "Teacher Gmail, password, DOB, and school code credentials collection"
+    },
+    "/schoolTeacherRecords/{id}": {
+      "schema": { "$ref": "#/entities/SchoolTeacherRecords" },
+      "description": "Teacher data indexed under school code"
+    }
+  }
+}

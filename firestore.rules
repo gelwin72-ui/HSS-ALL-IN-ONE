@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    // Default catch-all
+    match /{document=**} {
+      allow read, write: if true; // Permissive for school management applet demo/multi-device sync
+    }
+
+    match /schools/{schoolId} {
+      allow read, write: if true;
+    }
+
+    match /teachers/{teacherId} {
+      allow read, write: if true;
+    }
+
+    match /students/{studentId} {
+      allow read, write: if true;
+    }
+
+    match /attendance/{attendanceId} {
+      allow read, write: if true;
+    }
+
+    match /exams/{examId} {
+      allow read, write: if true;
+    }
+
+    match /marks/{markId} {
+      allow read, write: if true;
+    }
+
+    match /reminders/{reminderId} {
+      allow read, write: if true;
+    }
+
+    match /directives/{directiveId} {
+      allow read, write: if true;
+    }
+
+    match /timetables/{timetableId} {
+      allow read, write: if true;
+    }
+
+    match /teacherActivities/{activityId} {
+      allow read, write: if true;
+    }
+
+    match /auditLogs/{logId} {
+      allow read, write: if true;
+    }
+
+    match /reviews/{reviewId} {
+      allow read, write: if true;
+    }
+
+    match /blacklistedTeachers/{id} {
+      allow read, write: if true;
+    }
+
+    match /teacherCredentials/{id} {
+      allow read, write: if true;
+    }
+
+    match /schoolTeacherRecords/{id} {
+      allow read, write: if true;
+    }
+  }
+}

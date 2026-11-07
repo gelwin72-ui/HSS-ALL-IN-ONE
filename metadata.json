@@ -1,0 +1,6 @@
+{
+  "name": "HSS ALL IN ONE - Higher Secondary School Management System",
+  "description": "Smart School & Class Management System for Higher Secondary Teachers & Administration with real-time multi-device sync, attendance, exam mark entry, trajectory analytics, timetables, and PDF reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
