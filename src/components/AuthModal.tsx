@@ -23,8 +23,6 @@ interface AuthModalProps {
 }
 
 const AUTHORIZED_ADMIN_EMAILS = [
-  'principal.ghss@gmail.com',
-  'elwin.george2010@gmail.com',
   'joicegeorge1910@gmail.com'
 ];
 
@@ -47,7 +45,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     dob: '2008-01-01',
     email: 'ddd@gmail.com',
     phone: '+91 98470 54321',
-    schoolName: 'St. Sebastain\'s Higher Secondary School',
+    schoolName: 'St.Sebastain\'s Higher Secondary School Koodaranhi',
     schoolCode: 'SSHSS@111213',
     academicYear: '2026-2027',
     subject: 'Computer Science',
@@ -68,12 +66,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     pin: '1234'
   });
 
-  // Admin Login State
+  // Admin Login State - Strictly Authorized Credentials
   const [adminLoginData, setAdminLoginData] = useState({
-    email: 'principal.ghss@gmail.com',
+    email: 'joicegeorge1910@gmail.com',
     schoolCode: 'SSHSS@111213',
     designation: 'Principal',
-    pin: '1234'
+    pin: 'joice1910'
   });
 
   const isBlacklisted = (email: string, schoolCode: string) => {
@@ -101,11 +99,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       email: email || 'ddd@gmail.com',
       phone: signUpData.phone,
       dob: signUpData.dob,
-      schoolCode: sCode || 'FC',
-      schoolName: signUpData.schoolName || 'Higher Secondary School',
-      academicYear: signUpData.academicYear || '2025-2026',
-      subject: signUpData.subject || 'Physics',
-      designation: signUpData.designation || 'Physics Teacher',
+      schoolCode: sCode || 'SSHSS@111213',
+      schoolName: signUpData.schoolName || 'St.Sebastain\'s Higher Secondary School Koodaranhi',
+      academicYear: signUpData.academicYear || '2026-2027',
+      subject: signUpData.subject || 'Computer Science',
+      designation: signUpData.designation || 'Class Teacher',
       isClassTeacher: signUpData.isClassTeacher,
       standard: signUpData.standard,
       stream: signUpData.stream,
@@ -152,15 +150,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       email: inputEmail.includes('@') ? inputEmail : 'ddd@gmail.com',
       phone: '+91 98470 54321',
       dob: loginData.dob || '2008-01-01',
-      schoolCode: sCode || 'FC',
-      schoolName: signUpData.schoolName || 'St. Sebastian\'s Higher Secondary School',
-      academicYear: loginData.academicYear || '2025-2026',
-      subject: 'Physics',
-      designation: 'Physics Teacher',
+      schoolCode: sCode || 'SSHSS@111213',
+      schoolName: signUpData.schoolName || 'St.Sebastain\'s Higher Secondary School Koodaranhi',
+      academicYear: loginData.academicYear || '2026-2027',
+      subject: 'Computer Science',
+      designation: 'Class Teacher',
       isClassTeacher: true,
-      standard: 'Class 12 (Plus Two)',
-      stream: 'Bio-Science',
-      section: 'A',
+      standard: 'Class 11 (Plus One)',
+      stream: 'Computer-Science',
+      section: 'E',
       status: 'active',
       createdAt: new Date().toISOString()
     };
@@ -175,37 +173,33 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const adminCode = adminLoginData.schoolCode.trim().toUpperCase();
     const adminPin = adminLoginData.pin.trim();
 
-    // Strict 3-Factor Verification: Pre-authorized Gmail, School Code & Admin Password
-    const isAuthorizedEmail = AUTHORIZED_ADMIN_EMAILS.some(a => a.toLowerCase() === adminEmail);
-    const isValidSchoolCode = adminCode === 'SSHSS@111213' || adminCode.length >= 4;
-    const isValidPin = adminPin === '1234' || adminPin.length >= 4;
-
-    if (!isAuthorizedEmail) {
-      setAuthError(`Unauthorized Admin Gmail: "${adminEmail}" is not a pre-authorized school administrator email.`);
+    // STRICT PERMITTED ADMIN CHECK: Only joicegeorge1910@gmail.com with SSHSS@111213 and joice1910
+    if (adminEmail !== 'joicegeorge1910@gmail.com') {
+      setAuthError(`Access Denied: Only authorized Gmail "joicegeorge1910@gmail.com" can access the School Admin Panel.`);
       return;
     }
 
-    if (!isValidSchoolCode) {
-      setAuthError(`Invalid School Code: "${adminCode}" does not match the authorized School Admin portal code.`);
+    if (adminCode !== 'SSHSS@111213') {
+      setAuthError(`Access Denied: Invalid School Code "${adminCode}". Access requires School Code "SSHSS@111213".`);
       return;
     }
 
-    if (!isValidPin) {
-      setAuthError(`Invalid Admin Password: Incorrect password/PIN for administrator "${adminEmail}".`);
+    if (adminPin !== 'joice1910') {
+      setAuthError(`Access Denied: Incorrect password/PIN for administrator "${adminEmail}".`);
       return;
     }
 
     const adminSchool: School = {
-      id: adminCode,
-      schoolName: 'St. Sebastain\'s Higher Secondary School',
-      schoolCode: adminCode,
+      id: 'SSHSS@111213',
+      schoolName: 'St.Sebastain\'s Higher Secondary School Koodaranhi',
+      schoolCode: 'SSHSS@111213',
       address: 'Koodaranhi, Kozhikode, Kerala - 673604',
       phone: '+91 495 2200100',
-      email: adminEmail,
-      principalName: adminLoginData.designation || 'Principal',
+      email: 'joicegeorge1910@gmail.com',
+      principalName: 'Joice George',
       principalPhone: '+91 94471 23456',
-      adminPin: adminPin,
-      adminEmail: adminEmail,
+      adminPin: 'joice1910',
+      adminEmail: 'joicegeorge1910@gmail.com',
       createdAt: new Date().toISOString()
     };
     onAdminLogin(adminSchool);

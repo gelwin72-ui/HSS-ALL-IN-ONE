@@ -46,15 +46,15 @@ import { SchoolProfileModal } from './components/SchoolProfileModal';
 // Default initial seed data matching video showcase & user institutional setup
 const defaultSchool: School = {
   id: 'SSHSS@111213',
-  schoolName: 'St. Sebastain\'s Higher Secondary School',
+  schoolName: 'St.Sebastain\'s Higher Secondary School Koodaranhi',
   schoolCode: 'SSHSS@111213',
   address: 'Koodaranhi, Kozhikode, Kerala - 673604',
   phone: '+91 495 2200100',
-  email: 'principal.ghss@gmail.com',
-  principalName: 'Principal',
+  email: 'joicegeorge1910@gmail.com',
+  principalName: 'Joice George',
   principalPhone: '+91 94471 23456',
-  adminPin: '1234',
-  adminEmail: 'principal.ghss@gmail.com',
+  adminPin: 'joice1910',
+  adminEmail: 'joicegeorge1910@gmail.com',
   createdAt: new Date().toISOString()
 };
 
@@ -65,7 +65,7 @@ const defaultTeacher: Teacher = {
   phone: '+91 98470 54321',
   dob: '2008-01-01',
   schoolCode: 'SSHSS@111213',
-  schoolName: 'St. Sebastain\'s Higher Secondary School',
+  schoolName: 'St.Sebastain\'s Higher Secondary School Koodaranhi',
   academicYear: '2026-2027',
   subject: 'Computer Science',
   designation: 'Class Teacher',
